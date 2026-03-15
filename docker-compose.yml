@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  localstack:
+    image: localstack/localstack:3.1
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=dynamodb,sqs,s3
+      - DEFAULT_REGION=us-east-1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  api:
+    build:
+      context: ./taskforge-api
+    ports:
+      - "8080:8080"
+    environment:
+      - AWS_ENDPOINT=http://localstack:4566
+    depends_on:
+      localstack:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./taskforge-worker
+    ports:
+      - "8081:8081"
+    environment:
+      - AWS_ENDPOINT=http://localstack:4566
+      - WORKER_ID=worker-1
+    depends_on:
+      localstack:
+        condition: service_healthy

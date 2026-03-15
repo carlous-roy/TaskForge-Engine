@@ -1,0 +1,25 @@
+# Build
+target/
+*.jar
+*.war
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Maven wrapper (downloaded at build time)
+.mvn/wrapper/maven-wrapper.jar
+
+# Environment
+.env
+.env.local

@@ -1,0 +1,50 @@
+server:
+  port: ${SERVER_PORT:8081}
+
+spring:
+  application:
+    name: taskforge-worker
+  datasource:
+    url: jdbc:h2:mem:taskforge;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+
+aws:
+  region: us-east-1
+  endpoint: ${AWS_ENDPOINT:http://localhost:4566}
+  access-key: ${AWS_ACCESS_KEY:changeme}
+  secret-key: ${AWS_SECRET_KEY:changeme}
+
+taskforge:
+  dynamodb:
+    table: taskforge-reports
+  sqs:
+    queue: taskforge-reports
+    dlq: taskforge-reports-dlq
+    visibility-timeout: 120
+    max-receive-count: 3
+  s3:
+    bucket: taskforge-reports
+    download-expiry-minutes: 60
+  worker:
+    id: ${WORKER_ID:worker-1}
+    max-concurrent: 3
+    poll-interval-ms: 2000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.taskforge: DEBUG
+    software.amazon.awssdk: WARN
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{20} - %msg%n"
