@@ -18,9 +18,10 @@ single worker going down loses your job.
 The happy path is short. Most of the code here exists to handle the specific ways it fails:
 
 - A downstream service is briefly overloaded, so retries need **exponential backoff with jitter**
-  (1s, 4s, 16s, plus 20% randomness) rather than a synchronized retry storm.
-- A job is genuinely poisonous and will never succeed, so after three attempts it goes to a
-  **dead-letter queue** instead of cycling forever or vanishing.
+  (1s then 4s, plus 20% randomness) rather than a synchronized retry storm.
+- A job is genuinely poisonous and will never succeed, so after three attempts it stops being
+  retried and is **marked `DEAD_LETTER` in the job store** with the failing error recorded against
+  it, instead of cycling forever or vanishing.
 - A client's network hiccups and it submits the same request twice, so **idempotency keys** return
   `409 Conflict` rather than generating the report twice and billing for both.
 - A deploy rolls the workers mid-job, so **SIGTERM triggers a drain**: stop accepting, finish what's
@@ -41,8 +42,8 @@ The happy path is short. Most of the code here exists to handle the specific way
 - **S3 Report Storage**: generated CSV files are uploaded to S3 with presigned download URLs that expire after 60 minutes.
 
 ### Fault Tolerance
-- **Exponential Backoff**: failed jobs retry with increasing delays (1s → 4s → 16s) plus 20% jitter to prevent thundering herd.
-- **Dead Letter Queue**: after 3 failed attempts, jobs move to a dedicated DLQ for investigation instead of being silently dropped.
+- **Exponential Backoff**: failed jobs retry with increasing delays (1s → 4s) plus 20% jitter to prevent thundering herd. Three attempts total: the initial run plus two retries.
+- **Dead-Letter Handling**: retries stop after 3 attempts. The worker marks the job `DEAD_LETTER` in DynamoDB with the failure reason recorded against it and removes the SQS message, so a poison job is neither retried forever nor silently dropped. Job state lives in the job store, which is where both the API and the dashboard read it from, so dead-lettered jobs stay queryable via `GET /api/v1/reports?status=DEAD_LETTER` and have their own dashboard filter. An SQS redrive policy is provisioned on the main queue as a backstop for messages a worker dies on before it can record an outcome.
 - **Idempotency Keys**: duplicate submissions with the same key return `409 Conflict`. No duplicate reports, ever.
 - **Graceful Shutdown**: workers finish in-flight reports before stopping. SIGTERM triggers drain mode with a 60-second timeout.
 
@@ -147,6 +148,19 @@ Visit **http://localhost:8080**, select a report type, configure parameters, and
 ```
 
 This submits all 3 report types, tests idempotency, waits for processing, and checks download URLs.
+The script derives its date windows from the current date, so it stays aligned with the seeded
+sample data and is safe to re-run.
+
+### Alternative: Docker Compose
+
+`docker compose up` brings up LocalStack, the API and one worker together. The API and worker images
+build from source inside multi-stage Dockerfiles, so no local Maven build is needed first:
+
+```bash
+docker compose up --build
+```
+
+The dashboard is then on **http://localhost:8080**.
 
 ---
 
@@ -236,7 +250,7 @@ Unit tests cover job lifecycle, retry logic, and backoff calculation.
 | Layer | Technology |
 |-------|-----------|
 | Backend | Java 17, Spring Boot 3.2, Maven |
-| Queue | AWS SQS with dead letter queue |
+| Queue | AWS SQS (visibility timeouts, redrive backstop) |
 | Persistence | AWS DynamoDB with GSI and TTL |
 | Storage | AWS S3 with presigned URLs |
 | Data Source | H2 embedded database (sample business data) |
@@ -254,7 +268,8 @@ Unit tests cover job lifecycle, retry logic, and backoff calculation.
   belongs behind its own service boundary.
 - **Retry policy is fixed at three attempts for everything.** A transient S3 timeout and a malformed
   report request deserve different treatment: the first should retry aggressively, the second should
-  go straight to the DLQ. Classifying failures before retrying them would cut DLQ noise a lot.
+  be dead-lettered on the first failure. Classifying failures before retrying them would cut a lot of
+  pointless work.
 - **There is no backpressure.** The API accepts submissions as fast as clients send them, regardless
   of queue depth. Under sustained load that pushes the problem into SQS rather than solving it. A
   depth check that returns 503 above a threshold would be honest about capacity.

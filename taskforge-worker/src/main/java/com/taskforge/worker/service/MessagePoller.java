@@ -26,14 +26,13 @@ public class MessagePoller {
     private final ExecutorService threadPool;
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final AtomicInteger activeJobs = new AtomicInteger(0);
-
-    @Value("${taskforge.worker.max-concurrent:3}")
-    private int maxConcurrent;
+    private final int maxConcurrent;
 
     public MessagePoller(QueueService queueService, JobProcessor jobProcessor,
                           @Value("${taskforge.worker.max-concurrent:3}") int maxConcurrent) {
         this.queueService = queueService;
         this.jobProcessor = jobProcessor;
+        this.maxConcurrent = maxConcurrent;
         this.threadPool = Executors.newFixedThreadPool(maxConcurrent);
         log.info("Message poller initialized (max-concurrent={})", maxConcurrent);
     }

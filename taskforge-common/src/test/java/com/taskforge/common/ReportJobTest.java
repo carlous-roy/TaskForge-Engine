@@ -61,25 +61,34 @@ class ReportJobTest {
     }
 
     @Test
-    void shouldCalculateExponentialBackoff() {
+    void shouldCalculateExponentialBackoffForEveryReachableRetry() {
+        // markProcessing() increments attemptCount before the attempt runs and canRetry() is
+        // attemptCount < maxRetries, so with the default maxRetries of 3 only two backoffs are
+        // ever taken: 1s after the first attempt and 4s after the second. The third attempt is
+        // terminal and is dead-lettered rather than requeued. Jitter adds up to 20% on top.
         ReportJob job = new ReportJob();
 
-        job.setAttemptCount(1);
+        job.markProcessing();
+        assertTrue(job.canRetry());
         long b1 = job.calculateBackoffMs();
-        assertTrue(b1 >= 800 && b1 <= 1200, "Expected ~1s, got " + b1);
+        assertTrue(b1 >= 1000 && b1 <= 1200, "Expected ~1s, got " + b1);
 
-        job.setAttemptCount(2);
+        job.markProcessing();
+        assertTrue(job.canRetry());
         long b2 = job.calculateBackoffMs();
-        assertTrue(b2 >= 3200 && b2 <= 4800, "Expected ~4s, got " + b2);
+        assertTrue(b2 >= 4000 && b2 <= 4800, "Expected ~4s, got " + b2);
 
-        job.setAttemptCount(3);
-        long b3 = job.calculateBackoffMs();
-        assertTrue(b3 >= 12800 && b3 <= 19200, "Expected ~16s, got " + b3);
+        job.markProcessing();
+        assertFalse(job.canRetry(), "Third attempt is terminal, so no third backoff is reachable");
     }
 
     @Test
     void shouldCapBackoffAt60Seconds() {
+        // The cap is a guard on calculateBackoffMs() itself: nothing in the default configuration
+        // reaches an attempt count this high, but raising maxRetries would, and the delay must
+        // stay inside the SQS 900s DelaySeconds ceiling.
         ReportJob job = new ReportJob();
+        job.setMaxRetries(12);
         job.setAttemptCount(10);
         long backoff = job.calculateBackoffMs();
         assertTrue(backoff <= 60_000, "Backoff should be capped at 60s, got " + backoff);
