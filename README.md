@@ -1,280 +1,314 @@
 # TaskForge
 
 <p>
-  <a href="https://taskforge.roycarlous.com"><img src="https://img.shields.io/badge/Live_demo-taskforge.roycarlous.com-22C55E?style=flat-square" alt="Live demo" /></a>
+  <a href="https://github.com/carlous-roy/TaskForge-Engine/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF?style=flat-square&logo=githubactions&logoColor=white" alt="CI" /></a>
   <img src="https://img.shields.io/badge/Java-17-007396?style=flat-square&logo=openjdk&logoColor=white" alt="Java 17" />
-  <img src="https://img.shields.io/badge/Spring_Boot-6DB33F?style=flat-square&logo=springboot&logoColor=white" alt="Spring Boot" />
-  <img src="https://img.shields.io/badge/AWS-SQS_%C2%B7_S3_%C2%B7_DynamoDB-FF9900?style=flat-square&logo=amazonwebservices&logoColor=white" alt="AWS" />
-  <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
+  <img src="https://img.shields.io/badge/Spring_Boot-4.1-6DB33F?style=flat-square&logo=springboot&logoColor=white" alt="Spring Boot 4.1" />
+  <img src="https://img.shields.io/badge/AWS-SQS_%C2%B7_DynamoDB_%C2%B7_S3-FF9900?style=flat-square&logo=amazonwebservices&logoColor=white" alt="AWS" />
+  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
 </p>
 
-A distributed report generation engine.
+A job-processing system for CSV reports, built on Spring Boot with SQS, DynamoDB and S3.
 
-You POST a report request. The API hands back a job ID immediately and pushes the job onto SQS.
-Independent workers poll the queue, query the data, build a CSV, upload it to S3, and update job
-state. You poll for status and eventually get a presigned download URL. Nothing blocks, and no
-single worker going down loses your job.
+You POST a report request. The API writes a job record, puts a message on an SQS queue and answers
+`202 Accepted` with the job id. Independent workers receive the message, run a query against a
+seeded sample dataset in an embedded H2 database, upload the CSV to S3 and record the outcome. You
+poll the job, or watch the embedded dashboard, and when it is `COMPLETED` you get a presigned S3 URL
+that is valid for 60 minutes.
 
-The happy path is short. Most of the code here exists to handle the specific ways it fails:
+Most of the code is about what happens when a step fails. The behaviour below is what the code does,
+and each point has a test.
 
-- A downstream service is briefly overloaded, so retries need **exponential backoff with jitter**
-  (1s then 4s, plus 20% randomness) rather than a synchronized retry storm.
-- A job is genuinely poisonous and will never succeed, so after three attempts it stops being
-  retried and is **marked `DEAD_LETTER` in the job store** with the failing error recorded against
-  it, instead of cycling forever or vanishing.
-- A client's network hiccups and it submits the same request twice, so **idempotency keys** return
-  `409 Conflict` rather than generating the report twice and billing for both.
-- A deploy rolls the workers mid-job, so **SIGTERM triggers a drain**: stop accepting, finish what's
-  in flight, 60-second timeout, then exit.
-- Something failed at 3am and you need to know where, so a **12-character correlation ID** assigned
-  at submission follows the job through API to SQS to worker to S3, in every log line.
+- **Retries with full-jitter backoff, driven by SQS.** A failed attempt does not re-send the message.
+  The worker hides the same message with `ChangeMessageVisibility` for `random(0, min(60 s, 2 s × 2^attempt))`
+  seconds and SQS redelivers it. Three attempts in total.
+- **A real dead-letter queue.** The queue's redrive policy moves a message to the dead-letter queue
+  after its third delivery. A consumer in the worker reads that queue, marks the job `FAILED` with
+  the last recorded error, stamps `deadLetteredAt`, and stops.
+- **Idempotency keys enforced by a conditional transaction.** The job and a `KEY#<key>` marker are
+  written in one DynamoDB `TransactWriteItems`, each conditional on not existing. Concurrent
+  duplicates lose the transaction and get `409 Conflict` with the existing job id.
+- **Conditional state transitions.** Every write to a job is conditional on a version attribute. A
+  slow worker cannot overwrite a job another worker has completed.
+- **A drain on SIGTERM.** The worker stops polling, finishes in-flight jobs for up to 60 seconds,
+  then interrupts what is left; an interrupted job hands its message straight back to SQS.
+- **Correlation ids on every hop.** The API accepts or generates `X-Correlation-ID`, every log line
+  in both processes carries it, it travels as an SQS message attribute, and the S3 object is tagged
+  with it.
+- **Rate limiting that survives a proxy.** 60 requests per minute per client address, with
+  `X-Forwarded-For` honoured only from a configured list of proxies.
 
-[Live demo](https://taskforge.roycarlous.com) · [Portfolio](https://roycarlous.com)
+[Browser walkthrough](https://taskforge.roycarlous.com) · [Portfolio](https://roycarlous.com)
 
----
-
-## Features
-
-### Distributed Job Processing
-- **REST API**: submit report requests and poll for status. Returns immediately with a job ID while workers process in the background.
-- **SQS Message Queue**: jobs are queued via AWS SQS with configurable visibility timeouts. Workers independently poll for work, enabling horizontal scaling.
-- **DynamoDB Persistence**: full job lifecycle tracked with status transitions, attempt counts, timestamps, and correlation IDs.
-- **S3 Report Storage**: generated CSV files are uploaded to S3 with presigned download URLs that expire after 60 minutes.
-
-### Fault Tolerance
-- **Exponential Backoff**: failed jobs retry with increasing delays (1s → 4s) plus 20% jitter to prevent thundering herd. Three attempts total: the initial run plus two retries.
-- **Dead-Letter Handling**: retries stop after 3 attempts. The worker marks the job `DEAD_LETTER` in DynamoDB with the failure reason recorded against it and removes the SQS message, so a poison job is neither retried forever nor silently dropped. Job state lives in the job store, which is where both the API and the dashboard read it from, so dead-lettered jobs stay queryable via `GET /api/v1/reports?status=DEAD_LETTER` and have their own dashboard filter. An SQS redrive policy is provisioned on the main queue as a backstop for messages a worker dies on before it can record an outcome.
-- **Idempotency Keys**: duplicate submissions with the same key return `409 Conflict`. No duplicate reports, ever.
-- **Graceful Shutdown**: workers finish in-flight reports before stopping. SIGTERM triggers drain mode with a 60-second timeout.
-
-### Report Generation
-- **Sales Summary**: aggregates transaction data by product, region, and date with totals, averages, and order counts.
-- **Inventory Snapshot**: current stock levels across warehouses with low-stock alerts and total valuation.
-- **User Activity**: login counts, actions per user, most common actions, and hourly activity breakdown.
-
-### Production Engineering
-- **Correlation Tracing**: every job gets a 12-character ID at submission. It follows the job from API → SQS → Worker → S3 through every log line.
-- **Rate Limiting**: 60 requests per minute per IP address. Returns `429 Too Many Requests` when exceeded.
-- **Job TTL**: reports auto-expire from DynamoDB after 24 hours. S3 presigned URLs expire after 60 minutes.
-- **Input Validation**: request payloads validated at the API layer with meaningful error messages.
-
-### Dashboard
-- **Report Submission**: select report type, configure parameters, and submit from the browser.
-- **Live Status Tracking**: reports table auto-refreshes every 2 seconds showing real-time status transitions.
-- **Service Health**: queue depth, service status, and worker connectivity at a glance.
-- **Download Links**: completed reports show direct S3 download links for the generated CSV files.
+The walkthrough at taskforge.roycarlous.com is a static page that animates the job state machine
+in the browser. It does not call this API and produces no real reports; to see the system run, start
+it locally as described below.
 
 ---
 
-## Architecture
+## How a job moves
 
 ```
-┌──────────────────┐     ┌──────────────────────────────────────────────┐
-│  Dashboard       │────>│  Spring Boot API (:8080)                     │
-│  (embedded)      │     │                                              │
-└──────────────────┘     │  POST /api/v1/reports    -> Submit job       │
-                         │  GET  /api/v1/reports/id -> Status + URL     │
-┌──────────────────┐     │  GET  /api/v1/reports    -> List all         │
-│  Any HTTP Client │────>│  GET  /api/v1/health     -> Service health   │
-│  (curl, etc)     │     └──────────┬──────────┬───────────────────────┘
-└──────────────────┘                │          │
-                              ┌─────▼───┐  ┌───▼───────┐
-                              │ DynamoDB │  │    SQS    │
-                              └─────────┘  └─────┬─────┘
-                                                 │
-                         ┌───────────────────────▼─────────────────────┐
-                         │  Spring Boot Worker (:8081)                  │
-                         │                                              │
-                         │  Poll SQS -> Query H2 -> Generate CSV       │
-                         │  Upload S3 -> Update DynamoDB                │
-                         └──────────┬──────────┬───────────────────────┘
-                              ┌─────▼───┐  ┌───▼───┐
-                              │   H2    │  │  S3   │
-                              │  (data) │  │(files)│
-                              └─────────┘  └───────┘
+ACCEPTED ──> QUEUED ──> PROCESSING ──> COMPLETED
+                           │   ▲
+                           ▼   │ (SQS redelivers after the backoff)
+                     RETRY_SCHEDULED
+                           │
+                           ▼
+                         FAILED   (non-retryable error, or third attempt failed and the message
+                                   went to the dead-letter queue)
 ```
+
+1. `POST /api/v1/reports` validates the body and the parameters for the report type. Any problem
+   is a `400` that lists every issue.
+2. The API writes the job as `ACCEPTED` (with its idempotency-key marker, transactionally), sends
+   the SQS message, then moves the job to `QUEUED`. If the send fails, the record and the marker are
+   deleted again so the key is not burned, and the client gets `503` with `Retry-After`.
+3. A worker receives the message, loads the job and moves it to `PROCESSING` under its own name
+   (conditional on the version it read). If another worker holds the job and touched it within the
+   visibility timeout, the delivery is skipped. If the holder has gone silent for longer than that,
+   the job is taken over.
+4. The generator builds the CSV, the worker uploads it (tagged with the correlation id), moves the
+   job to `COMPLETED` and deletes the message.
+5. On failure the worker classifies the error. Bad parameters, parse errors, SQL errors that are bugs
+   and 4xx responses from AWS are permanent: the job is `FAILED` at once and the message deleted.
+   Timeouts, throttling, 5xx responses and connection failures are transient: the job becomes
+   `RETRY_SCHEDULED` with `nextAttemptAt`, and the message is hidden for the backoff.
+6. When the third delivery fails, the job is marked `FAILED` and the message is released immediately;
+   the next receive makes SQS move it to the dead-letter queue, where the worker's dead-letter
+   consumer records `deadLetteredAt` and acknowledges it. A message also reaches the dead-letter
+   queue when a worker dies holding it three times; then the consumer is what marks the job `FAILED`.
+
+### Backoff
+
+The delay before a retry is drawn uniformly from `[0, min(cap, base × 2^attempt)]` whole seconds,
+with `base = 2 s` and `cap = 60 s`: after the first failure `0–4 s`, after the second `0–8 s`. This is
+the "full jitter" strategy from Marc Brooker's post "Exponential Backoff And Jitter" on the AWS
+Architecture Blog (March 2015, https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/).
+The point of the randomness is that a batch of jobs failing against the same overloaded dependency
+does not come back all at once. `BackoffPolicyTest` checks the bounds and that repeated draws differ;
+`JobProcessorTest` checks that the visibility timeout actually sent to SQS varies.
+
+### Idempotency
+
+DynamoDB has one table. Job records use their UUID as the key; idempotency markers use
+`KEY#<idempotencyKey>` and point at the job id. A submission with a key writes both in one
+`TransactWriteItems`, each with `ConditionExpression attribute_not_exists(id)`. Two submissions with
+the same key cannot both succeed, whatever their timing; the loser reads the marker and answers
+`409 Conflict` with `existingReportId` and a `Location` header. `ReportJobRepositoryIT` runs twenty
+concurrent creates with one key and asserts one job; `SubmissionIT` does the same over HTTP.
 
 ---
 
-## Quick Start
+## Running it
 
 ### Prerequisites
 
-- Java 17+ ([install via Homebrew](https://formulae.brew.sh/formula/openjdk@17): `brew install openjdk@17`)
-- [Docker](https://docs.docker.com/get-docker/) (for LocalStack)
+- Java 17 or newer and Docker, or
+- Java 17 or newer and Python 3 with `moto[server]`, if you cannot run Docker.
 
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/carlous-roy/TaskForge-Engine.git
-cd TaskForge-Engine
-```
-
-### 2. Start LocalStack
-
-```bash
-docker run -d --name taskforge-localstack \
-  -p 4566:4566 \
-  -e SERVICES=dynamodb,sqs,s3 \
-  localstack/localstack:3.1
-```
-
-### 3. Build the project
-
-```bash
-./mvnw clean package -DskipTests
-```
-
-### 4. Start the API
-
-```bash
-java -jar taskforge-api/target/taskforge-api-1.0.0.jar
-```
-
-### 5. Start a Worker (new terminal)
-
-```bash
-WORKER_ID=worker-1 java -jar taskforge-worker/target/taskforge-worker-1.0.0.jar
-```
-
-### 6. Open the dashboard
-
-Visit **http://localhost:8080**, select a report type, configure parameters, and click Generate Report.
-
-### 7. Verify via CLI
-
-```bash
-./scripts/test-api.sh
-```
-
-This submits all 3 report types, tests idempotency, waits for processing, and checks download URLs.
-The script derives its date windows from the current date, so it stays aligned with the seeded
-sample data and is safe to re-run.
-
-### Alternative: Docker Compose
-
-`docker compose up` brings up LocalStack, the API and one worker together. The API and worker images
-build from source inside multi-stage Dockerfiles, so no local Maven build is needed first:
+### With Docker Compose
 
 ```bash
 docker compose up --build
 ```
 
-The dashboard is then on **http://localhost:8080**.
+This starts LocalStack, the API on http://localhost:8080 (the dashboard is at `/`) and one worker on
+port 8081. The images build the code inside Docker, so no local Maven or Node is needed. Presigned
+download links point at `http://localhost:4566`, which is LocalStack's published port.
+
+### Without Docker
+
+Start an emulator on port 4566, for example moto:
+
+```bash
+pip install "moto[server]"
+moto_server -H 127.0.0.1 -p 4566
+```
+
+Build and run:
+
+```bash
+./mvnw -B package -DskipTests -DskipITs
+java -jar taskforge-api/target/taskforge-api.jar
+WORKER_ID=worker-1 java -jar taskforge-worker/target/taskforge-worker.jar
+```
+
+The default Spring profile is `local`, which points every AWS client at `http://localhost:4566` with
+placeholder credentials. Both processes create the table, the two queues and the bucket if they are
+missing.
+
+### Check it end to end
+
+```bash
+./scripts/test-api.sh
+```
+
+The script submits a report, repeats the submission to get a `409`, sends invalid input to get
+`400`s, waits for the worker, follows the `302` to the presigned URL and downloads the CSV. It exits
+non-zero on the first unexpected response.
+
+### Against AWS
+
+Run with `SPRING_PROFILES_ACTIVE=aws`. No endpoint override is set and credentials come from the
+SDK's default provider chain (environment, profile, instance or task role). The processes still
+create their own table, queues and bucket at startup, so the identity needs those permissions as
+well as the read and write ones. This project has so far only been run against emulators.
 
 ---
 
-## API Reference
+## API
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/reports` | POST | Submit a report request |
-| `/api/v1/reports/{id}` | GET | Get report status and metadata |
-| `/api/v1/reports/{id}/download` | GET | Redirect to S3 presigned download URL |
-| `/api/v1/reports` | GET | List reports (filter: `?status=COMPLETED`) |
-| `/api/v1/health` | GET | Service health check with queue depth |
+| Method | Path | Result |
+|---|---|---|
+| `POST` | `/api/v1/reports` | `202` with the job; `400` invalid input; `409` duplicate key; `503` queue unavailable |
+| `GET` | `/api/v1/reports/{id}` | `200` with the job and, once completed, `downloadUrl`; `404` unknown |
+| `GET` | `/api/v1/reports/{id}/download` | `302` to a presigned S3 URL; `409` not ready; `404` unknown or file expired |
+| `GET` | `/api/v1/reports?status=COMPLETED&limit=100` | Newest jobs first, with `downloadUrl` on completed ones |
+| `GET` | `/api/v1/health` | `status`, `queueDepth`, `deadLetterDepth`; `503` and `DEGRADED` when SQS cannot be reached |
+
+Submission body:
+
+```json
+{
+  "type": "SALES_SUMMARY",
+  "parameters": { "dateFrom": "2026-08-19", "dateTo": "2026-09-18", "region": "North" },
+  "idempotencyKey": "order-2026-09-18-01"
+}
+```
+
+Parameters are checked per type at submission: `SALES_SUMMARY` takes `dateFrom`, `dateTo`
+(ISO dates, from ≤ to) and `region`; `INVENTORY_SNAPSHOT` takes `warehouse` and `lowStockThreshold`
+(0–1,000,000); `USER_ACTIVITY` takes `dateFrom`, `dateTo` and `userId` (positive integer). Unknown
+parameter names are rejected. The idempotency key is 1–128 characters of `A-Z a-z 0-9 . _ : -`.
+
+Every error has the same body:
+
+```json
+{
+  "timestamp": "2026-09-18T17:04:29Z",
+  "status": 400,
+  "error": "Bad Request",
+  "message": "Invalid report parameters",
+  "details": ["parameter 'dateFrom' must be an ISO-8601 date (yyyy-MM-dd), got 'nope'"],
+  "path": "/api/v1/reports",
+  "correlationId": "67f6f365fda2",
+  "existingReportId": "..."
+}
+```
+
+`existingReportId` appears only on a `409` for a duplicate key. Malformed JSON, unknown fields, bad
+enum values, unsupported media types and methods, unknown routes and out-of-range query parameters
+are all `4xx` with a message that says what to fix. Responses to `/api/**` carry `X-RateLimit-Limit`
+and `X-RateLimit-Remaining`; a `429` carries `Retry-After`. Every response carries `X-Correlation-ID`.
 
 ---
 
-## Project Structure
+## The dashboard
 
-```
-TaskForge-Engine/
-├── taskforge-common/          # Shared models, AWS clients, services
-│   └── com.taskforge.common
-│       ├── config/                # AwsConfig (DynamoDB, SQS, S3), JacksonConfig
-│       ├── dto/                   # CreateReportRequest, ReportResponse, ErrorResponse
-│       ├── enums/                 # ReportType, ReportStatus
-│       ├── exception/             # ReportNotFound, Duplicate, GenerationException
-│       ├── model/                 # ReportJob (lifecycle, backoff calculation)
-│       ├── repository/            # ReportJobRepository (DynamoDB with GSI + TTL)
-│       └── service/               # QueueService (SQS), StorageService (S3)
-├── taskforge-api/             # REST API (port 8080)
-│   └── com.taskforge.api
-│       ├── config/                # RateLimitFilter (60 req/min per IP)
-│       ├── controller/            # ReportController, GlobalExceptionHandler
-│       ├── service/               # ReportService (submit, status, download)
-│       └── resources/static/      # Embedded React dashboard
-├── taskforge-worker/          # Report processor (port 8081)
-│   └── com.taskforge.worker
-│       ├── config/                # HealthEndpoint
-│       ├── data/                  # DataSeeder (H2 sample business data)
-│       ├── report/                # ReportGenerator + 3 implementations
-│       └── service/               # JobProcessor, MessagePoller (graceful shutdown)
-├── scripts/test-api.sh        # Automated API smoke tests
-├── docker-compose.yml         # Full stack (LocalStack + API + Worker)
-├── README.md
-└── LICENSE
-```
+The API serves a React dashboard at `/`, built with Vite in the `taskforge-dashboard` module and
+packaged into the API jar. It polls the report list and the health endpoint every five seconds. A
+failed refresh keeps the last list on screen and shows why; a `429` pauses polling for the period the
+API asks for. Completed rows link to the presigned CSV. Health shows what the API reports: `UP`,
+`DEGRADED` or `UNREACHABLE`, with queue and dead-letter depths. The health endpoint is exempt from
+rate limiting, and the list poll uses a fifth of the per-client budget.
+
+---
+
+## Reports and data
+
+The worker seeds an in-memory H2 database at startup with a sample dataset generated from a fixed
+random seed: 20 products, 800 transactions over the 90 days before startup, stock for 4 warehouses,
+25 users and 500 activity records over the previous 30 days. It is not real business data. Three
+generators produce CSV (UTF-8, CRLF, RFC 4180 quoting) from it:
+
+- `SALES_SUMMARY`: quantity, revenue, average price and order count per product and region in a
+  date range, then a summary line over the same rows.
+- `INVENTORY_SNAPSHOT`: stock and value per product and warehouse with a low-stock flag, then a
+  summary line over the same rows.
+- `USER_ACTIVITY`: per-user counts in a date range, then an hourly breakdown of the same rows.
+
+The filters apply to the summary sections as well as the rows.
 
 ---
 
 ## Configuration
 
-All settings are controlled via environment variables. Defaults work for local development with LocalStack.
+Settings live in `application.yml` under `taskforge.*` and `aws.*` and are bound to validated
+`@ConfigurationProperties`. The ones with environment variables:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AWS_ENDPOINT` | `http://localhost:4566` | LocalStack endpoint. Remove for real AWS. |
-| `AWS_ACCESS_KEY` | `changeme` | AWS access key |
-| `AWS_SECRET_KEY` | `changeme` | AWS secret key |
-| `WORKER_ID` | `worker-1` | Unique worker identifier |
+| Variable | Default | Meaning |
+|---|---|---|
+| `SPRING_PROFILES_ACTIVE` | `local` | `local` uses an emulator; `aws` uses AWS itself |
+| `AWS_ENDPOINT` | `http://localhost:4566` (local profile) | Emulator endpoint for every client |
+| `AWS_PUBLIC_ENDPOINT` | same as `AWS_ENDPOINT` | Endpoint written into presigned URLs |
+| `AWS_REGION` | `us-east-1` | Region |
+| `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` | `test` | Static credentials, used only with an emulator |
+| `TASKFORGE_TRUSTED_PROXIES` | empty | Regular expression of proxy addresses whose `X-Forwarded-For` is trusted |
+| `TASKFORGE_RATE_LIMIT_PER_MINUTE` | `60` | Requests per minute per client address |
+| `TASKFORGE_RATE_LIMIT_ENABLED` | `true` | |
+| `TASKFORGE_WORKER_MAX_CONCURRENT` | `3` | Jobs one worker runs at a time |
+| `TASKFORGE_WORKER_DRAIN_TIMEOUT` | `60s` | How long a stopping worker waits for in-flight jobs |
+| `WORKER_ID` | host name plus a suffix | Name written into `lockedBy` and logs |
 | `SERVER_PORT` | `8081` | Worker HTTP port |
 
+Other settings, changed in the YAML: `taskforge.retry.max-attempts` (3; also the redrive policy's
+`maxReceiveCount`), `taskforge.retry.backoff.base` (2 s) and `cap` (60 s), `taskforge.sqs.visibility-timeout`
+(120 s; must exceed the longest report), `taskforge.dynamodb.job-ttl` (24 h), `taskforge.s3.download-expiry`
+(60 min) and `taskforge.s3.object-expiry-days` (1, applied as a bucket lifecycle rule).
+
 ---
 
-## Scaling
-
-Start additional workers on different ports:
+## Tests
 
 ```bash
-WORKER_ID=worker-2 SERVER_PORT=8082 java -jar taskforge-worker/target/taskforge-worker-1.0.0.jar
+./mvnw -B verify              # unit tests, dashboard tests, integration tests
+./mvnw -B verify -DskipITs    # unit tests only
 ```
 
-Each worker independently polls SQS. Visibility timeout ensures no two workers process the same job.
+Unit tests cover the state machine, the backoff, the parameter rules, the API's status codes and
+error bodies, the rate limiter, the proxy-header handling on a real Tomcat, the worker's outcomes
+(success, retry, last attempt, permanent failure, interruption, stale lock, takeover), the
+dead-letter consumer, the generators over the seeded data, and the drain (in-flight work completes;
+the deadline interrupts what is left).
+
+Integration tests (`*IT`, run by failsafe) exercise the real DynamoDB, SQS and S3 code:
+the repository (including twenty concurrent creates with one key), the queue (redelivery after
+`ChangeMessageVisibility`, redrive to the dead-letter queue), storage (tags, lifecycle, a presigned
+URL that downloads), the API over HTTP with a burst of duplicate submissions, and the whole worker
+with an injected failing generator (retry, retry, fail, dead-letter). They start LocalStack through
+Testcontainers, which is what CI does; without Docker, set `AWS_ENDPOINT_OVERRIDE` to a running
+emulator, for example `AWS_ENDPOINT_OVERRIDE=http://127.0.0.1:4566 ./mvnw -B verify` with
+`moto_server` on that port.
 
 ---
 
-## Running Tests
+## Layout
 
-```bash
-./mvnw test
+```
+taskforge-common/        job model, DynamoDB repository, SQS and S3 services, backoff, parameter rules
+taskforge-api/           REST API, error mapping, rate limiter, correlation filter
+taskforge-worker/        poller, job processor, dead-letter consumer, generators, data seeder
+taskforge-dashboard/     React dashboard (Vite), packaged as static resources for the API
+taskforge-test-support/  locates the AWS emulator for integration tests
+scripts/test-api.sh      end-to-end check against a running stack
+.github/workflows/ci.yml mvnw verify and docker compose build on every push
 ```
 
-Unit tests cover job lifecycle, retry logic, and backoff calculation.
-
 ---
 
-## Tech Stack
+## Limits
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | Java 17, Spring Boot 3.2, Maven |
-| Queue | AWS SQS (visibility timeouts, redrive backstop) |
-| Persistence | AWS DynamoDB with GSI and TTL |
-| Storage | AWS S3 with presigned URLs |
-| Data Source | H2 embedded database (sample business data) |
-| Local AWS | LocalStack 3.1 |
-| Dashboard | React 18 (embedded, served from Spring Boot) |
-| Infrastructure | Docker Compose |
-
----
-
-## What I'd do differently
-
-- **The report generators query H2 in-process.** That was the right call for a demo that has to run
-  from `docker compose up` with no external database, but it means the worker owns both the queue
-  loop and the data access. In a real deployment those are separate concerns and the data layer
-  belongs behind its own service boundary.
-- **Retry policy is fixed at three attempts for everything.** A transient S3 timeout and a malformed
-  report request deserve different treatment: the first should retry aggressively, the second should
-  be dead-lettered on the first failure. Classifying failures before retrying them would cut a lot of
-  pointless work.
-- **There is no backpressure.** The API accepts submissions as fast as clients send them, regardless
-  of queue depth. Under sustained load that pushes the problem into SQS rather than solving it. A
-  depth check that returns 503 above a threshold would be honest about capacity.
-- **Rate limiting is per-IP and in-memory**, so it resets on deploy and does not survive horizontal
-  scaling. Fine for a demo, wrong for anything real.
+- Rate limiting is per API instance and in memory. Two instances give a client twice the budget.
+- There is no authentication. Anyone who can reach the API can submit jobs and read every job and
+  its download link. Put it behind something before exposing it.
+- A job that runs longer than the SQS visibility timeout (120 s) will be redelivered while it is
+  still running; the second worker will see a stale lock and take it over, and the first worker's
+  result is discarded when its conditional write fails. Raise the timeout for slow reports.
+- The dashboard's list request reads the whole table (every page of the scan) and sorts in memory.
+  With the 24-hour TTL the table stays small; it would not scale to millions of jobs.
+- The services create their own table, queues and bucket. That is convenient locally and means the
+  AWS identity needs create permissions.
 
 ## License
 
