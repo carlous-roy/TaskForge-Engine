@@ -21,6 +21,7 @@
     <modules>
         <module>taskforge-common</module>
         <module>taskforge-test-support</module>
+        <module>taskforge-dashboard</module>
         <module>taskforge-api</module>
         <module>taskforge-worker</module>
     </modules>
@@ -47,6 +48,11 @@
             <dependency>
                 <groupId>com.taskforge</groupId>
                 <artifactId>taskforge-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.taskforge</groupId>
+                <artifactId>taskforge-dashboard</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

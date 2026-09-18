@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.taskforge</groupId>
+        <artifactId>taskforge-parent</artifactId>
+        <version>1.1.0</version>
+    </parent>
+    <artifactId>taskforge-dashboard</artifactId>
+    <name>TaskForge Dashboard</name>
+    <description>React dashboard built with Vite and packaged as static resources for the API</description>
+
+    <properties>
+        <node.version>v22.23.2</node.version>
+        <!-- -Ddashboard.skip=true builds the API without the dashboard (no Node download). -->
+        <dashboard.skip>false</dashboard.skip>
+        <dashboard.test.skip>${skipTests}</dashboard.test.skip>
+    </properties>
+
+    <profiles>
+        <profile>
+            <id>dashboard-skip</id>
+            <activation>
+                <property>
+                    <name>dashboard.skip</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <properties>
+                <dashboard.test.skip>true</dashboard.test.skip>
+            </properties>
+        </profile>
+    </profiles>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>com.github.eirslett</groupId>
+                <artifactId>frontend-maven-plugin</artifactId>
+                <version>2.0.2</version>
+                <configuration>
+                    <installDirectory>${project.build.directory}</installDirectory>
+                    <workingDirectory>${project.basedir}</workingDirectory>
+                    <skip>${dashboard.skip}</skip>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>install-node-and-npm</id>
+                        <goals>
+                            <goal>install-node-and-npm</goal>
+                        </goals>
+                        <configuration>
+                            <nodeVersion>${node.version}</nodeVersion>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-ci</id>
+                        <goals>
+                            <goal>npm</goal>
+                        </goals>
+                        <configuration>
+                            <arguments>ci --no-audit --no-fund</arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-build</id>
+                        <goals>
+                            <goal>npm</goal>
+                        </goals>
+                        <configuration>
+                            <arguments>run build</arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-test</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>npm</goal>
+                        </goals>
+                        <configuration>
+                            <arguments>test</arguments>
+                            <skip>${dashboard.test.skip}</skip>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

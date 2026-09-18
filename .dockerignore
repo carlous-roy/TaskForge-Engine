@@ -6,3 +6,4 @@
 *.log
 scripts
 README.md
+**/node_modules
