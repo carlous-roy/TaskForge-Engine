@@ -2,6 +2,7 @@ package com.taskforge.worker.service;
 
 import com.taskforge.common.config.TaskForgeProperties;
 import com.taskforge.common.correlation.CorrelationId;
+import com.taskforge.common.enums.ReportStatus;
 import com.taskforge.common.enums.ReportType;
 import com.taskforge.common.exception.ReportGenerationException;
 import com.taskforge.common.exception.StaleJobException;
@@ -93,35 +94,8 @@ public class JobProcessor {
             queueService.delete(message.receiptHandle());
             return Outcome.SKIPPED;
         }
-        Optional<ReportJob> loaded = repository.findById(message.jobId());
-        if (loaded.isEmpty()) {
-            log.warn("Job {} does not exist; discarding message {}", message.jobId(), message.messageId());
-            queueService.delete(message.receiptHandle());
-            return Outcome.SKIPPED;
-        }
-        ReportJob job = loaded.get();
-        CorrelationId.bind(job.getCorrelationId());
-        Instant now = clock.instant();
-
-        if (job.getStatus().isTerminal()) {
-            log.info("Job {} is already {}; discarding duplicate delivery", job.getId(), job.getStatus());
-            queueService.delete(message.receiptHandle());
-            return Outcome.SKIPPED;
-        }
-        if (job.getStatus() == com.taskforge.common.enums.ReportStatus.PROCESSING) {
-            if (!job.isLockStale(now, staleLockAfter)) {
-                log.info("Job {} is being processed by {} since {}; leaving the message for redelivery",
-                        job.getId(), job.getLockedBy(), job.getUpdatedAt());
-                return Outcome.SKIPPED;
-            }
-            log.warn("Job {} was left PROCESSING by {} at {}; taking it over", job.getId(), job.getLockedBy(), job.getUpdatedAt());
-        }
-
-        job.markProcessing(workerId, now);
-        try {
-            repository.update(job);
-        } catch (StaleJobException e) {
-            log.info("Job {} was taken by another worker first; leaving the message alone", job.getId());
+        ReportJob job = acquire(message);
+        if (job == null) {
             return Outcome.SKIPPED;
         }
         log.info("Processing {} job {} (attempt {}/{}, delivery {})",
@@ -152,6 +126,52 @@ public class JobProcessor {
         } catch (Exception e) {
             return handleFailure(job, message, e);
         }
+    }
+
+    /**
+     * Loads the job and moves it to PROCESSING under this worker's name, or returns null when the
+     * delivery should not be processed (job gone or terminal, or held by a live worker).
+     *
+     * <p>The conditional write can fail because the API is still moving the job from ACCEPTED to
+     * QUEUED when the message arrives; that write does not change who may process the job, so the
+     * lock is retried on a fresh copy instead of wasting the delivery.
+     */
+    private ReportJob acquire(ReceivedMessage message) {
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            Optional<ReportJob> loaded = repository.findById(message.jobId());
+            if (loaded.isEmpty()) {
+                log.warn("Job {} does not exist; discarding message {}", message.jobId(), message.messageId());
+                queueService.delete(message.receiptHandle());
+                return null;
+            }
+            ReportJob job = loaded.get();
+            CorrelationId.bind(job.getCorrelationId());
+            Instant now = clock.instant();
+
+            if (job.getStatus().isTerminal()) {
+                log.info("Job {} is already {}; discarding duplicate delivery", job.getId(), job.getStatus());
+                queueService.delete(message.receiptHandle());
+                return null;
+            }
+            if (job.getStatus() == ReportStatus.PROCESSING) {
+                if (!job.isLockStale(now, staleLockAfter)) {
+                    log.info("Job {} is being processed by {} since {}; leaving the message for redelivery",
+                            job.getId(), job.getLockedBy(), job.getUpdatedAt());
+                    return null;
+                }
+                log.warn("Job {} was left PROCESSING by {} at {}; taking it over", job.getId(), job.getLockedBy(), job.getUpdatedAt());
+            }
+
+            job.markProcessing(workerId, now);
+            try {
+                repository.update(job);
+                return job;
+            } catch (StaleJobException e) {
+                log.info("Job {} changed while locking it (try {} of 3); reloading", job.getId(), attempt);
+            }
+        }
+        log.warn("Job {} kept changing; leaving the message for redelivery", message.jobId());
+        return null;
     }
 
     private Outcome handleFailure(ReportJob job, ReceivedMessage message, Exception failure) {

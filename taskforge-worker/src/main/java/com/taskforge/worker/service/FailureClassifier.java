@@ -2,6 +2,7 @@ package com.taskforge.worker.service;
 
 import com.taskforge.common.exception.InvalidReportParametersException;
 import com.taskforge.common.exception.ReportGenerationException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.NonTransientDataAccessException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.dao.RecoverableDataAccessException;
@@ -56,7 +57,8 @@ final class FailureClassifier {
                 return Kind.PERMANENT;
             }
             if (t instanceof TransientDataAccessException || t instanceof RecoverableDataAccessException
-                    || t instanceof QueryTimeoutException) {
+                    || t instanceof QueryTimeoutException || t instanceof DataAccessResourceFailureException) {
+                // Spring files a lost connection under "non-transient"; for a job it is worth a retry.
                 return Kind.TRANSIENT;
             }
             if (t instanceof NonTransientDataAccessException) {

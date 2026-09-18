@@ -48,8 +48,8 @@ public class UserActivityGenerator implements ReportGenerator {
         userId.ifPresent(filterArgs::add);
 
         CsvWriter csv = new CsvWriter().row("username", "email", "login_count", "total_actions", "last_active", "most_common_action");
-        List<Object> args = new ArrayList<>(filterArgs);   // sub-select
-        args.addAll(filterArgs);                             // outer query
+        List<Object> args = new ArrayList<>(List.of(dateFrom, dateTo));   // sub-select, already bound to u.id
+        args.addAll(filterArgs);                                            // outer query
         jdbc.query("""
                 SELECT u.username, u.email,
                        SUM(CASE WHEN a.action_type = 'LOGIN' THEN 1 ELSE 0 END) AS login_count,
