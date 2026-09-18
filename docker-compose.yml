@@ -1,39 +1,64 @@
+# Local stack: LocalStack (DynamoDB, SQS, S3), the API and one worker.
+# Ports are published on the loopback interface only; LocalStack has no authentication.
 services:
   localstack:
-    image: localstack/localstack:3.1
+    # localstack/localstack:2026.8.3
+    image: localstack/localstack:2026.8.3@sha256:4abc29e923e5ed8a63d6c705a9dfa74b15d560e7055845299d87b22dabf9f6e2
     ports:
-      - "4566:4566"
+      - "127.0.0.1:4566:4566"
     environment:
       - SERVICES=dynamodb,sqs,s3
       - DEFAULT_REGION=us-east-1
+      # Actually delete DynamoDB items whose TTL has passed (LocalStack keeps them by default).
+      - DYNAMODB_REMOVE_EXPIRED_ITEMS=1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 15s
+    restart: unless-stopped
 
   api:
     build:
       context: .
       dockerfile: taskforge-api/Dockerfile
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       - AWS_ENDPOINT=http://localstack:4566
+      # Presigned download URLs are opened by the browser on the host, which reaches LocalStack
+      # through the published port rather than the Compose network name.
+      - AWS_PUBLIC_ENDPOINT=http://localhost:4566
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY=test
+      - AWS_SECRET_KEY=test
+      # Regular expression of proxies whose X-Forwarded-For is trusted; none by default.
+      - TASKFORGE_TRUSTED_PROXIES=
     depends_on:
       localstack:
         condition: service_healthy
+    # In-flight HTTP requests finish during Spring's graceful shutdown (30 s) before SIGKILL.
+    stop_grace_period: 45s
+    restart: unless-stopped
 
   worker:
     build:
       context: .
       dockerfile: taskforge-worker/Dockerfile
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     environment:
       - AWS_ENDPOINT=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY=test
+      - AWS_SECRET_KEY=test
       - WORKER_ID=worker-1
+      - TASKFORGE_WORKER_DRAIN_TIMEOUT=60s
     depends_on:
       localstack:
         condition: service_healthy
+    # The worker drains in-flight jobs for up to 60 s after SIGTERM; Docker must not SIGKILL it
+    # before that (the default grace period is 10 s).
+    stop_grace_period: 75s
+    restart: unless-stopped
