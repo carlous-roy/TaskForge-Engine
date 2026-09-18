@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 /**
@@ -103,8 +104,37 @@ class MessagePollerTest {
         long elapsedMs = (System.nanoTime() - before) / 1_000_000;
 
         assertThat(interrupted).as("the job thread was interrupted at the deadline").isTrue();
-        assertThat(elapsedMs).isBetween(1_000L, 8_000L);
+        assertThat(elapsedMs).as("deadline enforced without waiting for the long poll first").isBetween(1_000L, 4_000L);
         assertThat(poller.getActiveJobs()).isZero();
+    }
+
+    @Test
+    void messagesReceivedWhileStoppingAreHandedBackImmediately() throws Exception {
+        MessagePoller poller = poller(Duration.ofSeconds(5));
+        CountDownLatch polling = new CountDownLatch(1);
+        AtomicBoolean stopped = new AtomicBoolean();
+        when(queueService.receive(anyInt())).thenAnswer(inv -> {
+            polling.countDown();
+            while (!stopped.get()) {
+                try {
+                    Thread.sleep(10);   // a long poll that only returns after stop() has begun
+                } catch (InterruptedException e) {
+                    // The SDK's blocking receive is not cut short by an interrupt either.
+                }
+            }
+            return List.of(message("late"));
+        });
+
+        poller.start();
+        assertThat(polling.await(5, TimeUnit.SECONDS)).isTrue();
+        Thread stopper = new Thread(poller::stop);
+        stopper.start();
+        Thread.sleep(200);
+        stopped.set(true);
+        stopper.join(10_000);
+
+        org.mockito.Mockito.verify(queueService, org.mockito.Mockito.timeout(5_000)).changeVisibility("rh-late", 0);
+        org.mockito.Mockito.verify(processor, never()).process(message("late"));
     }
 
     @Test

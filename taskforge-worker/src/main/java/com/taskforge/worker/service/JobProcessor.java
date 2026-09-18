@@ -184,10 +184,19 @@ public class JobProcessor {
             case INTERRUPTED -> {
                 log.warn("Attempt {} of job {} interrupted by shutdown; releasing the message", attempt, job.getId());
                 job.markRetryScheduled("Attempt " + attempt + " was interrupted by a worker shutdown", now, now);
-                if (tryUpdate(job)) {
-                    queueService.changeVisibility(message.receiptHandle(), 0);
+                // The SDK refuses to make calls on an interrupted thread, so the flag is cleared for
+                // the hand-back and set again afterwards.
+                Thread.interrupted();
+                try {
+                    if (tryUpdate(job)) {
+                        queueService.changeVisibility(message.receiptHandle(), 0);
+                    }
+                } catch (RuntimeException e) {
+                    log.error("Could not hand job {} back after the interrupt; it will be redelivered after the visibility timeout",
+                            job.getId(), e);
+                } finally {
+                    Thread.currentThread().interrupt();
                 }
-                Thread.currentThread().interrupt();
                 return Outcome.INTERRUPTED;
             }
             case PERMANENT -> {

@@ -217,6 +217,19 @@ class JobProcessorTest {
             Thread.currentThread().interrupt();
             throw new ReportGenerationException("aborted", true);
         });
+        // The real SDK refuses calls on an interrupted thread; the hand-back must clear the flag first.
+        org.mockito.Mockito.doAnswer(inv -> {
+            if (Thread.currentThread().isInterrupted()) {
+                throw software.amazon.awssdk.core.exception.AbortedException.builder().message("Thread was interrupted").build();
+            }
+            return null;
+        }).when(repository).update(any());
+        org.mockito.Mockito.doAnswer(inv -> {
+            if (Thread.currentThread().isInterrupted()) {
+                throw software.amazon.awssdk.core.exception.AbortedException.builder().message("Thread was interrupted").build();
+            }
+            return null;
+        }).when(queueService).changeVisibility(anyString(), anyInt());
 
         Outcome outcome = processor.process(message(job, 1));
 

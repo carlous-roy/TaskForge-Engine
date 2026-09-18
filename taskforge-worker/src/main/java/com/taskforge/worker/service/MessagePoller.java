@@ -89,8 +89,9 @@ public class MessagePoller implements SmartLifecycle {
                 }
                 for (ReceivedMessage message : messages) {
                     if (!running) {
-                        // Not started: the message becomes visible again after its visibility timeout.
-                        break;
+                        // Received while stopping: hand it back so another worker gets it at once.
+                        queueService.changeVisibility(message.receiptHandle(), 0);
+                        continue;
                     }
                     capacity.acquire();
                     activeJobs.incrementAndGet();
@@ -130,18 +131,21 @@ public class MessagePoller implements SmartLifecycle {
         }
     }
 
+    /**
+     * How long, after the drain deadline has interrupted the remaining jobs, they are given to hand
+     * their messages back. An interrupt cannot cut short a blocking HTTP call, so this covers one
+     * such call plus the hand-back writes.
+     */
+    static final Duration INTERRUPT_GRACE = Duration.ofSeconds(30);
+
     @Override
     public synchronized void stop() {
         if (!running) return;
         running = false;
         log.info("Shutdown requested: no longer polling, {} job(s) in flight, waiting up to {}",
                 activeJobs.get(), config.getDrainTimeout());
+        // The drain clock starts now; the poll thread may still be inside a long poll and is joined last.
         pollThread.interrupt();
-        try {
-            pollThread.join(receiveWait.plusSeconds(5).toMillis());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
         pool.shutdown();
         try {
             if (pool.awaitTermination(config.getDrainTimeout().toMillis(), TimeUnit.MILLISECONDS)) {
@@ -150,10 +154,13 @@ public class MessagePoller implements SmartLifecycle {
                 log.warn("Drain deadline of {} reached with {} job(s) still running; interrupting them",
                         config.getDrainTimeout(), activeJobs.get());
                 pool.shutdownNow();
-                if (!pool.awaitTermination(10, TimeUnit.SECONDS)) {
-                    log.error("{} job thread(s) did not stop after being interrupted", activeJobs.get());
+                if (pool.awaitTermination(INTERRUPT_GRACE.toMillis(), TimeUnit.MILLISECONDS)) {
+                    log.info("Interrupted jobs handed their messages back");
+                } else {
+                    log.error("{} job thread(s) did not stop within {} of being interrupted", activeJobs.get(), INTERRUPT_GRACE);
                 }
             }
+            pollThread.join(receiveWait.plusSeconds(5).toMillis());
         } catch (InterruptedException e) {
             pool.shutdownNow();
             Thread.currentThread().interrupt();
