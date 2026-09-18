@@ -17,7 +17,7 @@ Thumbs.db
 # Logs
 *.log
 
-# Maven wrapper (downloaded at build time)
+# Maven wrapper (only-script distribution type; the jar is never committed)
 .mvn/wrapper/maven-wrapper.jar
 
 # Environment
