@@ -1,9 +1,16 @@
 server:
   port: ${SERVER_PORT:8081}
+  shutdown: graceful
 
 spring:
   application:
     name: taskforge-worker
+  profiles:
+    # "local" points the AWS clients at an emulator; run with SPRING_PROFILES_ACTIVE=aws for AWS itself.
+    default: local
+  lifecycle:
+    # Must exceed taskforge.worker.drain-timeout: the drain runs inside one shutdown phase.
+    timeout-per-shutdown-phase: 90s
   datasource:
     url: jdbc:h2:mem:taskforge;DB_CLOSE_DELAY=-1
     driver-class-name: org.h2.Driver
@@ -14,36 +21,44 @@ spring:
       fail-on-unknown-properties: true
 
 aws:
-  region: us-east-1
-  endpoint: ${AWS_ENDPOINT:http://localhost:4566}
-  access-key: ${AWS_ACCESS_KEY:changeme}
-  secret-key: ${AWS_SECRET_KEY:changeme}
+  region: ${AWS_REGION:us-east-1}
+  endpoint: ${AWS_ENDPOINT:}
+  public-endpoint: ${AWS_PUBLIC_ENDPOINT:}
+  access-key: ${AWS_ACCESS_KEY:test}
+  secret-key: ${AWS_SECRET_KEY:test}
 
 taskforge:
   dynamodb:
-    table: taskforge-reports
+    table: ${TASKFORGE_TABLE:taskforge-reports}
+    job-ttl: 24h
   sqs:
-    queue: taskforge-reports
-    dlq: taskforge-reports-dlq
-    visibility-timeout: 120
-    max-receive-count: 3
+    queue: ${TASKFORGE_QUEUE:taskforge-reports}
+    dlq: ${TASKFORGE_DLQ:taskforge-reports-dlq}
+    visibility-timeout: 120s
+    wait-time: 10s
   s3:
-    bucket: taskforge-reports
-    download-expiry-minutes: 60
+    bucket: ${TASKFORGE_BUCKET:taskforge-reports}
+    download-expiry: 60m
+    object-expiry-days: 1
+  retry:
+    max-attempts: 3
+    backoff:
+      base: 2s
+      cap: 60s
   worker:
-    id: ${WORKER_ID:worker-1}
-    max-concurrent: 3
-    poll-interval-ms: 2000
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info
+    id: ${WORKER_ID:}
+    max-concurrent: ${TASKFORGE_WORKER_MAX_CONCURRENT:3}
+    batch-size: 5
+    idle-wait: 500ms
+    drain-timeout: ${TASKFORGE_WORKER_DRAIN_TIMEOUT:60s}
+    dead-letter:
+      enabled: true
+      poll-interval: 5s
 
 logging:
   level:
-    com.taskforge: DEBUG
+    root: INFO
+    com.taskforge: INFO
     software.amazon.awssdk: WARN
   pattern:
-    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{20} - %msg%n"
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] [%X{cid:-}] %logger{24} - %msg%n"

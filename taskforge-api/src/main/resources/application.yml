@@ -1,30 +1,57 @@
 server:
   port: 8080
+  # Finish in-flight HTTP requests before exiting (bounded by spring.lifecycle.timeout-per-shutdown-phase).
+  shutdown: graceful
+  # X-Forwarded-For is honoured only when the TCP peer matches TASKFORGE_TRUSTED_PROXIES, a regular
+  # expression over proxy addresses (for example "10\.0\.0\.\d+" or "172\.18\.0\.\d+"). With the
+  # empty default no proxy is trusted and the rate limiter keys on the peer address itself.
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      internal-proxies: ${TASKFORGE_TRUSTED_PROXIES:}
+      remote-ip-header: X-Forwarded-For
+      protocol-header: X-Forwarded-Proto
 
 spring:
   application:
     name: taskforge-api
+  profiles:
+    # "local" points the AWS clients at an emulator; run with SPRING_PROFILES_ACTIVE=aws for AWS itself.
+    default: local
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   jackson:
     deserialization:
       fail-on-unknown-properties: true
 
 aws:
-  region: us-east-1
-  endpoint: ${AWS_ENDPOINT:http://localhost:4566}
-  access-key: ${AWS_ACCESS_KEY:changeme}
-  secret-key: ${AWS_SECRET_KEY:changeme}
+  region: ${AWS_REGION:us-east-1}
+  endpoint: ${AWS_ENDPOINT:}
+  public-endpoint: ${AWS_PUBLIC_ENDPOINT:}
+  access-key: ${AWS_ACCESS_KEY:test}
+  secret-key: ${AWS_SECRET_KEY:test}
 
 taskforge:
   dynamodb:
-    table: taskforge-reports
+    table: ${TASKFORGE_TABLE:taskforge-reports}
+    job-ttl: 24h
   sqs:
-    queue: taskforge-reports
-    dlq: taskforge-reports-dlq
-    visibility-timeout: 120
-    max-receive-count: 3
+    queue: ${TASKFORGE_QUEUE:taskforge-reports}
+    dlq: ${TASKFORGE_DLQ:taskforge-reports-dlq}
+    visibility-timeout: 120s
   s3:
-    bucket: taskforge-reports
-    download-expiry-minutes: 60
+    bucket: ${TASKFORGE_BUCKET:taskforge-reports}
+    download-expiry: 60m
+    object-expiry-days: 1
+  retry:
+    max-attempts: 3
+    backoff:
+      base: 2s
+      cap: 60s
+  rate-limit:
+    enabled: ${TASKFORGE_RATE_LIMIT_ENABLED:true}
+    requests-per-minute: ${TASKFORGE_RATE_LIMIT_PER_MINUTE:60}
+    max-tracked-clients: 10000
 
 management:
   endpoints:
@@ -34,7 +61,8 @@ management:
 
 logging:
   level:
-    com.taskforge: DEBUG
+    root: INFO
+    com.taskforge: INFO
     software.amazon.awssdk: WARN
   pattern:
-    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{20} - %msg%n"
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] [%X{cid:-}] %logger{24} - %msg%n"

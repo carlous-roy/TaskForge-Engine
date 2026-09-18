@@ -1,107 +1,77 @@
 package com.taskforge.worker.report;
 
 import com.taskforge.common.enums.ReportType;
-import com.taskforge.common.exception.ReportGenerationException;
+import com.taskforge.common.report.ReportParameters;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintWriter;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 
+/**
+ * Stock per product and warehouse with a low-stock flag, then a summary over the same rows: the
+ * warehouse filter applies to the summary as well.
+ */
 @Component
 public class InventorySnapshotGenerator implements ReportGenerator {
 
     private static final Logger log = LoggerFactory.getLogger(InventorySnapshotGenerator.class);
+    static final int DEFAULT_LOW_STOCK_THRESHOLD = 10;
+
     private final JdbcTemplate jdbc;
 
-    public InventorySnapshotGenerator(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    public InventorySnapshotGenerator(JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
+    }
 
     @Override
-    public ReportType getType() { return ReportType.INVENTORY_SNAPSHOT; }
+    public ReportType getType() {
+        return ReportType.INVENTORY_SNAPSHOT;
+    }
 
     @Override
-    public byte[] generate(Map<String, String> params, String correlationId) {
-        String warehouse = params.getOrDefault("warehouse", null);
-        int lowStockThreshold = parseInt(params.get("lowStockThreshold"), 10);
+    public byte[] generate(ReportParameters params) {
+        String warehouse = params.warehouse().orElse(null);
+        int threshold = params.lowStockThreshold(DEFAULT_LOW_STOCK_THRESHOLD);
+        log.info("Generating INVENTORY_SNAPSHOT warehouse={} lowStockThreshold={}", warehouse == null ? "all" : warehouse, threshold);
 
-        log.info("[{}] Generating INVENTORY_SNAPSHOT: warehouse={}, lowStockThreshold={}",
-                correlationId, warehouse, lowStockThreshold);
+        String where = warehouse == null ? "" : " WHERE i.warehouse = ?";
+        List<Object> args = new ArrayList<>();
+        if (warehouse != null) args.add(warehouse);
 
-        try {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            PrintWriter pw = new PrintWriter(out);
-
-            pw.println("product,category,warehouse,stock_quantity,unit_cost,total_value,low_stock");
-
-            String sql = """
-                SELECT p.name AS product, p.category, i.warehouse,
-                       i.stock_quantity, p.unit_cost,
+        CsvWriter csv = new CsvWriter().row("product", "category", "warehouse", "stock_quantity", "unit_cost", "total_value", "low_stock");
+        jdbc.query("""
+                SELECT p.name AS product, p.category, i.warehouse, i.stock_quantity, p.unit_cost,
                        (i.stock_quantity * p.unit_cost) AS total_value
                 FROM inventory i
                 JOIN products p ON i.product_id = p.id
-                """;
+                """ + where + " ORDER BY total_value DESC, p.name, i.warehouse",
+                rs -> {
+                    int qty = rs.getInt("stock_quantity");
+                    csv.row(rs.getString("product"), rs.getString("category"), rs.getString("warehouse"), qty,
+                            rs.getDouble("unit_cost"), rs.getDouble("total_value"), qty < threshold ? "YES" : "no");
+                },
+                args.toArray());
 
-            Object[] args;
-            if (warehouse != null && !warehouse.isBlank()) {
-                sql += " WHERE i.warehouse = ? ORDER BY total_value DESC";
-                args = new Object[]{warehouse};
-            } else {
-                sql += " ORDER BY total_value DESC";
-                args = new Object[]{};
-            }
-
-            final int threshold = lowStockThreshold;
-            jdbc.query(sql, rs -> {
-                int qty = rs.getInt("stock_quantity");
-                pw.printf("%s,%s,%s,%d,%.2f,%.2f,%s%n",
-                        escape(rs.getString("product")),
-                        rs.getString("category"),
-                        rs.getString("warehouse"),
-                        qty,
-                        rs.getDouble("unit_cost"),
-                        rs.getDouble("total_value"),
-                        qty < threshold ? "YES" : "no");
-            }, args);
-
-            // Summary
-            String summSql = """
+        List<Object> summaryArgs = new ArrayList<>(List.of(threshold));
+        summaryArgs.addAll(args);
+        jdbc.query("""
                 SELECT COUNT(*) AS total_items,
-                       SUM(i.stock_quantity) AS total_units,
-                       SUM(i.stock_quantity * p.unit_cost) AS total_value,
-                       SUM(CASE WHEN i.stock_quantity < ? THEN 1 ELSE 0 END) AS low_stock_count
+                       COALESCE(SUM(i.stock_quantity), 0) AS total_units,
+                       COALESCE(SUM(i.stock_quantity * p.unit_cost), 0) AS total_value,
+                       COALESCE(SUM(CASE WHEN i.stock_quantity < ? THEN 1 ELSE 0 END), 0) AS low_stock_count
                 FROM inventory i
                 JOIN products p ON i.product_id = p.id
-                """;
+                """ + where,
+                rs -> { csv.note("# Summary: %d items, %d total units, $%s total value, %d low-stock items".formatted(
+                        rs.getInt("total_items"), rs.getInt("total_units"), CsvWriter.money(rs.getDouble("total_value")),
+                        rs.getInt("low_stock_count"))); },
+                summaryArgs.toArray());
 
-            jdbc.query(summSql, rs -> {
-                pw.println();
-                pw.printf("# Summary: %d items, %d total units, $%.2f total value, %d low-stock items%n",
-                        rs.getInt("total_items"), rs.getInt("total_units"),
-                        rs.getDouble("total_value"), rs.getInt("low_stock_count"));
-            }, lowStockThreshold);
-
-            pw.flush();
-            byte[] content = out.toByteArray();
-            log.info("[{}] INVENTORY_SNAPSHOT complete: {} bytes", correlationId, content.length);
-            return content;
-
-        } catch (Exception e) {
-            throw new ReportGenerationException("Inventory snapshot failed: " + e.getMessage(), e, true);
-        }
-    }
-
-    private static int parseInt(String s, int fallback) {
-        if (s == null || s.isBlank()) return fallback;
-        try { return Integer.parseInt(s); }
-        catch (Exception e) { return fallback; }
-    }
-
-    private static String escape(String s) {
-        if (s == null) return "";
-        if (s.contains(",") || s.contains("\"")) return "\"" + s.replace("\"", "\"\"") + "\"";
-        return s;
+        byte[] content = csv.toBytes();
+        log.info("INVENTORY_SNAPSHOT complete: {} bytes", content.length);
+        return content;
     }
 }

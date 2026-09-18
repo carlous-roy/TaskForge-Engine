@@ -1,0 +1,5 @@
+# Real AWS: no endpoint override; credentials come from the SDK's default provider chain.
+aws:
+  endpoint: ""
+  public-endpoint: ""
+  region: ${AWS_REGION:us-east-1}

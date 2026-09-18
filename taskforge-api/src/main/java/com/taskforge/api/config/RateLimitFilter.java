@@ -1,107 +1,145 @@
 package com.taskforge.api.config;
 
-import jakarta.servlet.*;
+import com.taskforge.common.config.TaskForgeProperties;
+import com.taskforge.common.correlation.CorrelationId;
+import com.taskforge.common.dto.ErrorResponse;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.time.Clock;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Fixed-window rate limit of 60 requests per minute per client IP.
+ * Fixed-window rate limit per client address on {@code /api/**}.
  *
- * <p>State is in-process, so it resets on deploy and is per-instance rather than global. That is a
- * deliberate limit of this build, not an oversight: see "What I'd do differently" in the README.
+ * <p>The client address is {@link HttpServletRequest#getRemoteAddr()}. Behind a proxy that address
+ * is the proxy's, so the API enables Tomcat's {@code RemoteIpValve}
+ * ({@code server.forward-headers-strategy=native}); the valve replaces the remote address with the
+ * one from {@code X-Forwarded-For} only when the immediate peer is in the configured
+ * {@code server.tomcat.remoteip.internal-proxies} list. A client that sends the header directly is
+ * therefore still counted under its own address, and cannot spread its requests over invented ones.
+ *
+ * <p>The dashboard's static files and the health endpoint are not limited: a browser tab polling
+ * health cannot starve its own submissions, and monitoring never sees a 429.
+ *
+ * <p>State is in memory and per instance. It is bounded: once {@code max-tracked-clients} addresses
+ * have live windows, further new addresses share one overflow window until old ones expire, which
+ * limits memory without resetting everybody's counters.
  */
 @Component
-public class RateLimitFilter implements Filter {
+@Order(Ordered.HIGHEST_PRECEDENCE + 10)
+public class RateLimitFilter extends OncePerRequestFilter {
 
-    private static final int MAX_REQUESTS = 60;
-    private static final long WINDOW_MS = 60_000;
+    static final long WINDOW_MS = 60_000;
+    static final String OVERFLOW_KEY = "overflow";
+    static final int MAX_KEY_LENGTH = 64;
+    private static final List<String> UNLIMITED_PATHS = List.of("/api/v1/health");
 
-    /** A counter whose window closed this long ago can no longer affect a decision. */
-    private static final long STALE_AFTER_MS = WINDOW_MS * 2;
+    private final TaskForgeProperties.RateLimit config;
+    private final ObjectMapper json;
+    private final Clock clock;
+    private final Map<String, Window> windows = new ConcurrentHashMap<>();
+    private final AtomicLong lastSweepAt = new AtomicLong();
 
-    /** Sweep no more than once per window, so a burst does not trigger a scan per request. */
-    private static final long SWEEP_INTERVAL_MS = WINDOW_MS;
-
-    /** Hard ceiling on tracked clients, so a spray of unique source IPs cannot grow the map forever. */
-    private static final int MAX_TRACKED_CLIENTS = 10_000;
-
-    private final Map<String, WindowCounter> counters = new ConcurrentHashMap<>();
-    private final AtomicLong lastSweepAt = new AtomicLong(System.currentTimeMillis());
+    public RateLimitFilter(TaskForgeProperties properties, ObjectMapper json, Clock clock) {
+        this.config = properties.getRateLimit();
+        this.json = json;
+        this.clock = clock;
+    }
 
     @Override
-    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
-            throws IOException, ServletException {
-        HttpServletRequest req = (HttpServletRequest) request;
-        long now = System.currentTimeMillis();
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        if (!config.isEnabled()) return true;
+        String path = request.getRequestURI();
+        return path == null || !path.startsWith("/api/") || UNLIMITED_PATHS.contains(path);
+    }
 
-        evictStale(now);
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
+        long now = clock.millis();
+        Window window = windowFor(clientKey(request), now);
+        int used = window.count.incrementAndGet();
+        int limit = config.getRequestsPerMinute();
 
-        String client = clientKey(req);
-        WindowCounter counter = counters.compute(client, (k, v) ->
-                (v == null || now - v.windowStart > WINDOW_MS) ? new WindowCounter(now) : v);
+        response.setHeader("X-RateLimit-Limit", String.valueOf(limit));
+        response.setHeader("X-RateLimit-Remaining", String.valueOf(Math.max(0, limit - used)));
 
-        if (counter.count.incrementAndGet() > MAX_REQUESTS) {
-            HttpServletResponse resp = (HttpServletResponse) response;
-            resp.setStatus(429);
-            resp.setContentType("application/json");
-            resp.getWriter().write("{\"status\":429,\"error\":\"Too Many Requests\",\"message\":\"Rate limit exceeded. Max 60 requests per minute.\"}");
+        if (used > limit) {
+            long retryAfterSeconds = Math.max(1, (window.startedAt + WINDOW_MS - now + 999) / 1000);
+            response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
+            response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds));
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            ErrorResponse body = new ErrorResponse(clock.instant(), HttpStatus.TOO_MANY_REQUESTS.value(),
+                    "Too Many Requests",
+                    "Rate limit exceeded: at most " + limit + " requests per minute per client. Retry after "
+                            + retryAfterSeconds + " second(s).",
+                    List.of(), request.getRequestURI(), CorrelationId.current(), null);
+            response.getWriter().write(json.writeValueAsString(body));
             return;
         }
-
         chain.doFilter(request, response);
     }
 
-    /**
-     * Behind a load balancer {@code getRemoteAddr()} returns the balancer's address, which would put
-     * every visitor in one bucket and make the 60/min limit effectively global. Prefer the
-     * originating address from {@code X-Forwarded-For} when it is present.
-     *
-     * <p>The header is client-supplied and therefore only as trustworthy as the proxy in front of
-     * this service; deployments that are not behind a header-rewriting proxy should not honour it.
-     */
-    private String clientKey(HttpServletRequest req) {
-        String forwarded = req.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            int comma = forwarded.indexOf(',');
-            String origin = (comma >= 0 ? forwarded.substring(0, comma) : forwarded).trim();
-            if (!origin.isEmpty()) {
-                return origin;
+    private Window windowFor(String key, long now) {
+        Window window = windows.get(key);
+        if (window != null && !window.expired(now)) {
+            return window;
+        }
+        if (window == null && windows.size() >= config.getMaxTrackedClients()) {
+            sweep(now);
+            if (windows.size() >= config.getMaxTrackedClients()) {
+                key = OVERFLOW_KEY;
             }
         }
-        return req.getRemoteAddr();
+        return windows.compute(key, (k, v) -> (v == null || v.expired(now)) ? new Window(now) : v);
     }
 
-    /**
-     * Drops counters whose window has long closed. Without this the map grows by one entry per
-     * distinct source address for the lifetime of the process.
-     */
-    private void evictStale(long now) {
+    /** Drops expired windows, at most once per second, so a burst of new clients cannot make every request scan the map. */
+    private void sweep(long now) {
         long last = lastSweepAt.get();
-        boolean due = (now - last) > SWEEP_INTERVAL_MS || counters.size() > MAX_TRACKED_CLIENTS;
-        if (!due || !lastSweepAt.compareAndSet(last, now)) {
+        if (now - last < 1_000 || !lastSweepAt.compareAndSet(last, now)) {
             return;
         }
-
-        counters.entrySet().removeIf(e -> (now - e.getValue().windowStart) > STALE_AFTER_MS);
-
-        // Every tracked window is still live and there are more of them than we are willing to
-        // hold. Drop the lot rather than grow without bound; the cost is that a small number of
-        // in-flight clients get a fresh window.
-        if (counters.size() > MAX_TRACKED_CLIENTS) {
-            counters.clear();
-        }
+        windows.entrySet().removeIf(e -> e.getValue().expired(now));
     }
 
-    private static class WindowCounter {
-        final long windowStart;
-        final AtomicInteger count = new AtomicInteger(0);
-        WindowCounter(long windowStart) { this.windowStart = windowStart; }
+    private static String clientKey(HttpServletRequest request) {
+        String address = request.getRemoteAddr();
+        if (address == null || address.isBlank()) return "unknown";
+        return address.length() > MAX_KEY_LENGTH ? address.substring(0, MAX_KEY_LENGTH) : address;
+    }
+
+    /** Visible for tests: number of client windows currently tracked. */
+    int trackedClients() {
+        return windows.size();
+    }
+
+    private static final class Window {
+        final long startedAt;
+        final AtomicInteger count = new AtomicInteger();
+
+        Window(long startedAt) {
+            this.startedAt = startedAt;
+        }
+
+        boolean expired(long now) {
+            return now - startedAt >= WINDOW_MS;
+        }
     }
 }

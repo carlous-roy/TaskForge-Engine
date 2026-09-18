@@ -7,7 +7,9 @@ import com.taskforge.common.model.ReportJob;
 import java.time.Instant;
 import java.util.Map;
 
+/** A job as the API presents it. Field order is the order clients see. */
 public class ReportResponse {
+
     private String id;
     private ReportType type;
     private ReportStatus status;
@@ -15,10 +17,13 @@ public class ReportResponse {
     private String correlationId;
     private String errorMessage;
     private int attemptCount;
-    private int maxRetries;
+    private int maxAttempts;
     private String downloadUrl;
     private Instant createdAt;
+    private Instant updatedAt;
     private Instant completedAt;
+    private Instant nextAttemptAt;
+    private Instant deadLetteredAt;
     private long executionTimeMs;
 
     public static ReportResponse from(ReportJob job) {
@@ -34,10 +39,13 @@ public class ReportResponse {
         r.correlationId = job.getCorrelationId();
         r.errorMessage = job.getErrorMessage();
         r.attemptCount = job.getAttemptCount();
-        r.maxRetries = job.getMaxRetries();
+        r.maxAttempts = job.getMaxAttempts();
         r.downloadUrl = downloadUrl;
         r.createdAt = job.getCreatedAt();
+        r.updatedAt = job.getUpdatedAt();
         r.completedAt = job.getCompletedAt();
+        r.nextAttemptAt = job.getNextAttemptAt();
+        r.deadLetteredAt = job.getDeadLetteredAt();
         r.executionTimeMs = job.getExecutionTimeMs();
         return r;
     }
@@ -49,9 +57,12 @@ public class ReportResponse {
     public String getCorrelationId() { return correlationId; }
     public String getErrorMessage() { return errorMessage; }
     public int getAttemptCount() { return attemptCount; }
-    public int getMaxRetries() { return maxRetries; }
+    public int getMaxAttempts() { return maxAttempts; }
     public String getDownloadUrl() { return downloadUrl; }
     public Instant getCreatedAt() { return createdAt; }
+    public Instant getUpdatedAt() { return updatedAt; }
     public Instant getCompletedAt() { return completedAt; }
+    public Instant getNextAttemptAt() { return nextAttemptAt; }
+    public Instant getDeadLetteredAt() { return deadLetteredAt; }
     public long getExecutionTimeMs() { return executionTimeMs; }
 }
