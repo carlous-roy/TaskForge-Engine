@@ -1,7 +1,7 @@
 package com.taskforge.worker.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.taskforge.common.enums.ReportStatus;
 import com.taskforge.common.exception.ReportGenerationException;
 import com.taskforge.common.model.ReportJob;
@@ -132,7 +132,7 @@ public class JobProcessor {
     private String extractJobId(Message message) {
         try {
             JsonNode body = objectMapper.readTree(message.body());
-            return body.get("jobId").asText();
+            return body.get("jobId").asString();
         } catch (Exception e) {
             return null;
         }

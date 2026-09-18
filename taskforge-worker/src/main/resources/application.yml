@@ -9,10 +9,9 @@ spring:
     driver-class-name: org.h2.Driver
     username: sa
     password:
-  jpa:
-    hibernate:
-      ddl-auto: none
-    show-sql: false
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
 
 aws:
   region: us-east-1

@@ -1,7 +1,7 @@
 package com.taskforge.common.repository;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import com.taskforge.common.enums.ReportStatus;
 import com.taskforge.common.enums.ReportType;
 import com.taskforge.common.exception.ReportNotFoundException;
@@ -136,7 +136,7 @@ public class ReportJobRepository {
         if (job.getParameters() != null && !job.getParameters().isEmpty()) {
             try {
                 item.put("parameters", s(objectMapper.writeValueAsString(job.getParameters())));
-            } catch (JsonProcessingException e) {
+            } catch (JacksonException e) {
                 log.error("[{}] Failed to serialize parameters", job.getCorrelationId(), e);
             }
         }
@@ -165,7 +165,7 @@ public class ReportJobRepository {
         if (item.containsKey("parameters")) {
             try {
                 job.setParameters(objectMapper.readValue(item.get("parameters").s(), Map.class));
-            } catch (JsonProcessingException e) {
+            } catch (JacksonException e) {
                 log.error("Failed to deserialize parameters", e);
             }
         }

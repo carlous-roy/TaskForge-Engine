@@ -54,7 +54,7 @@ public class InventorySnapshotGenerator implements ReportGenerator {
             }
 
             final int threshold = lowStockThreshold;
-            jdbc.query(sql, args, rs -> {
+            jdbc.query(sql, rs -> {
                 int qty = rs.getInt("stock_quantity");
                 pw.printf("%s,%s,%s,%d,%.2f,%.2f,%s%n",
                         escape(rs.getString("product")),
@@ -64,7 +64,7 @@ public class InventorySnapshotGenerator implements ReportGenerator {
                         rs.getDouble("unit_cost"),
                         rs.getDouble("total_value"),
                         qty < threshold ? "YES" : "no");
-            });
+            }, args);
 
             // Summary
             String summSql = """
@@ -76,12 +76,12 @@ public class InventorySnapshotGenerator implements ReportGenerator {
                 JOIN products p ON i.product_id = p.id
                 """;
 
-            jdbc.query(summSql, new Object[]{lowStockThreshold}, rs -> {
+            jdbc.query(summSql, rs -> {
                 pw.println();
                 pw.printf("# Summary: %d items, %d total units, $%.2f total value, %d low-stock items%n",
                         rs.getInt("total_items"), rs.getInt("total_units"),
                         rs.getDouble("total_value"), rs.getInt("low_stock_count"));
-            });
+            }, lowStockThreshold);
 
             pw.flush();
             byte[] content = out.toByteArray();

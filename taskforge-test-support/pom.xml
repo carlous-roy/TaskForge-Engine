@@ -8,42 +8,37 @@
         <artifactId>taskforge-parent</artifactId>
         <version>1.1.0</version>
     </parent>
-    <artifactId>taskforge-worker</artifactId>
-    <name>TaskForge Worker</name>
-    <description>Polls SQS, generates CSV reports from the seeded H2 dataset and uploads them to S3</description>
+    <artifactId>taskforge-test-support</artifactId>
+    <name>TaskForge Test Support</name>
+    <description>Locates or starts an AWS emulator for integration tests (LocalStack via Testcontainers, or AWS_ENDPOINT_OVERRIDE)</description>
 
     <dependencies>
         <dependency>
-            <groupId>com.taskforge</groupId>
-            <artifactId>taskforge-common</artifactId>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-localstack</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webmvc</artifactId>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>auth</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-jdbc</artifactId>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>regions</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>com.taskforge</groupId>
-            <artifactId>taskforge-test-support</artifactId>
-            <scope>test</scope>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
         </dependency>
     </dependencies>
 
     <build>
-        <finalName>taskforge-worker</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
             </plugin>
         </plugins>
     </build>

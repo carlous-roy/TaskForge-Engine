@@ -59,7 +59,7 @@ public class UserActivityGenerator implements ReportGenerator {
                 args = new Object[]{dateFrom, dateTo, dateFrom, dateTo};
             }
 
-            jdbc.query(sql, args, rs -> {
+            jdbc.query(sql, rs -> {
                 pw.printf("%s,%s,%d,%d,%s,%s%n",
                         rs.getString("username"),
                         rs.getString("email"),
@@ -67,7 +67,7 @@ public class UserActivityGenerator implements ReportGenerator {
                         rs.getInt("total_actions"),
                         rs.getString("last_active"),
                         rs.getString("top_action"));
-            });
+            }, args);
 
             // Hourly breakdown
             pw.println();
@@ -79,9 +79,9 @@ public class UserActivityGenerator implements ReportGenerator {
                 FROM user_activity a
                 WHERE a.action_date BETWEEN ? AND ?
                 GROUP BY HOUR(a.action_time) ORDER BY hr
-                """, new Object[]{dateFrom, dateTo}, rs -> {
+                """, rs -> {
                 pw.printf("%02d:00,%d%n", rs.getInt("hr"), rs.getInt("cnt"));
-            });
+            }, dateFrom, dateTo);
 
             pw.flush();
             byte[] content = out.toByteArray();

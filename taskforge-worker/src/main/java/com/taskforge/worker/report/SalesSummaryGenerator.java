@@ -58,7 +58,7 @@ public class SalesSummaryGenerator implements ReportGenerator {
                 args = new Object[]{dateFrom, dateTo};
             }
 
-            jdbc.query(sql, args, rs -> {
+            jdbc.query(sql, rs -> {
                 pw.printf("%s,%s,%d,%.2f,%.2f,%d%n",
                         escape(rs.getString("product")),
                         rs.getString("region"),
@@ -66,7 +66,7 @@ public class SalesSummaryGenerator implements ReportGenerator {
                         rs.getDouble("total_rev"),
                         rs.getDouble("avg_price"),
                         rs.getInt("order_count"));
-            });
+            }, args);
 
             // Summary row
             String summSql = """
@@ -77,12 +77,12 @@ public class SalesSummaryGenerator implements ReportGenerator {
                 FROM transactions WHERE sale_date BETWEEN ? AND ?
                 """;
 
-            jdbc.query(summSql, new Object[]{dateFrom, dateTo}, rs -> {
+            jdbc.query(summSql, rs -> {
                 pw.println();
                 pw.printf("# Summary: %d products, %d units sold, $%.2f total revenue, %d orders%n",
                         rs.getInt("products"), rs.getInt("total_qty"),
                         rs.getDouble("total_rev"), rs.getInt("total_orders"));
-            });
+            }, dateFrom, dateTo);
 
             pw.flush();
             byte[] content = out.toByteArray();
