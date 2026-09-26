@@ -50,6 +50,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Job records in one DynamoDB table.
@@ -74,6 +75,9 @@ public class ReportJobRepository {
     static final String KEY_PREFIX = "KEY#";
     static final String STATUS_INDEX = "status-index";
     private static final int MAX_ERROR_LENGTH = 1_000;
+    /** Retries for a transaction cancelled by a concurrent write to the same key. */
+    private static final int MAX_CONFLICT_ATTEMPTS = 5;
+    private static final long CONFLICT_PAUSE_MS = 20;
 
     private final DynamoDbClient dynamoDb;
     private final String tableName;
@@ -157,6 +161,12 @@ public class ReportJobRepository {
      * Inserts a new job. With an idempotency key, the job and its {@code KEY#} marker are written in
      * one transaction, each conditional on not existing yet.
      *
+     * <p>When two submissions with the same key arrive at the same moment, DynamoDB commits one
+     * transaction and cancels the other with a {@code TransactionConflict} reason rather than a
+     * failed condition. The cancelled side is retried a bounded number of times; on the retry the
+     * marker exists, the condition fails, and the caller gets the duplicate answer it would have
+     * had without the conflict.
+     *
      * @throws DuplicateReportException if the key already belongs to another job
      */
     public void create(ReportJob job) {
@@ -173,25 +183,43 @@ public class ReportJobRepository {
         marker.put("jobId", s(job.getId()));
         marker.put("createdAt", s(job.getCreatedAt().toString()));
         marker.put("ttl", n(job.getTtl()));
+        TransactWriteItemsRequest request = TransactWriteItemsRequest.builder()
+                .transactItems(
+                        TransactWriteItem.builder().put(Put.builder()
+                                .tableName(tableName).item(item)
+                                .conditionExpression("attribute_not_exists(id)").build()).build(),
+                        TransactWriteItem.builder().put(Put.builder()
+                                .tableName(tableName).item(marker)
+                                .conditionExpression("attribute_not_exists(id)").build()).build())
+                .build();
+        for (int attempt = 1; ; attempt++) {
+            try {
+                dynamoDb.transactWriteItems(request);
+                return;
+            } catch (TransactionCanceledException e) {
+                if (conditionFailed(e, 1)) {
+                    String existingId = findJobIdByIdempotencyKey(job.getIdempotencyKey()).orElse(null);
+                    throw new DuplicateReportException(job.getIdempotencyKey(), existingId);
+                }
+                if (conditionFailed(e, 0)) {
+                    throw new IllegalStateException("Job id collision for " + job.getId(), e);
+                }
+                if (!transactionConflict(e) || attempt >= MAX_CONFLICT_ATTEMPTS) {
+                    throw e;
+                }
+                log.debug("Transaction conflict creating job {} (attempt {}), retrying", job.getId(), attempt);
+                pauseBeforeRetry(attempt);
+            }
+        }
+    }
+
+    private static void pauseBeforeRetry(int attempt) {
+        long millis = ThreadLocalRandom.current().nextLong(CONFLICT_PAUSE_MS, CONFLICT_PAUSE_MS * (attempt + 1));
         try {
-            dynamoDb.transactWriteItems(TransactWriteItemsRequest.builder()
-                    .transactItems(
-                            TransactWriteItem.builder().put(Put.builder()
-                                    .tableName(tableName).item(item)
-                                    .conditionExpression("attribute_not_exists(id)").build()).build(),
-                            TransactWriteItem.builder().put(Put.builder()
-                                    .tableName(tableName).item(marker)
-                                    .conditionExpression("attribute_not_exists(id)").build()).build())
-                    .build());
-        } catch (TransactionCanceledException e) {
-            if (conditionFailed(e, 1)) {
-                String existingId = findJobIdByIdempotencyKey(job.getIdempotencyKey()).orElse(null);
-                throw new DuplicateReportException(job.getIdempotencyKey(), existingId);
-            }
-            if (conditionFailed(e, 0)) {
-                throw new IllegalStateException("Job id collision for " + job.getId(), e);
-            }
-            throw e;
+            Thread.sleep(millis);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while retrying a conflicting transaction", ie);
         }
     }
 
@@ -344,6 +372,12 @@ public class ReportJobRepository {
         List<CancellationReason> reasons = e.cancellationReasons();
         return reasons != null && reasons.size() > index
                 && "ConditionalCheckFailed".equals(reasons.get(index).code());
+    }
+
+    /** True when DynamoDB cancelled the transaction because another one touched the same items. */
+    private static boolean transactionConflict(TransactionCanceledException e) {
+        List<CancellationReason> reasons = e.cancellationReasons();
+        return reasons != null && reasons.stream().anyMatch(r -> "TransactionConflict".equals(r.code()));
     }
 
     private static String truncate(String message) {

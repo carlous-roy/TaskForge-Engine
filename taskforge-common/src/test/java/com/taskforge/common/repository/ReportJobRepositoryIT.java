@@ -7,6 +7,7 @@ import com.taskforge.common.enums.ReportType;
 import com.taskforge.common.exception.DuplicateReportException;
 import com.taskforge.common.exception.StaleJobException;
 import com.taskforge.common.model.ReportJob;
+import com.taskforge.testsupport.AwsEmulator;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
@@ -28,6 +29,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /** Runs against LocalStack (Testcontainers) or the emulator named by AWS_ENDPOINT_OVERRIDE. */
 class ReportJobRepositoryIT {
@@ -92,6 +94,9 @@ class ReportJobRepositoryIT {
 
     @Test
     void manyConcurrentCreatesWithOneKeyProduceExactlyOneJob() throws Exception {
+        assumeTrue(AwsEmulator.get().serializesTransactions(),
+                "needs an emulator that applies transactions one at a time (LocalStack); "
+                        + AwsEmulator.get().description() + " does not guarantee that");
         String key = "race-" + UUID.randomUUID();
         int threads = 20;
         ExecutorService pool = Executors.newFixedThreadPool(threads);

@@ -44,13 +44,16 @@ public final class AwsEmulator {
     private final String secretKey;
     private final String region;
     private final String description;
+    private final boolean serializesTransactions;
 
-    private AwsEmulator(URI endpoint, String accessKey, String secretKey, String region, String description) {
+    private AwsEmulator(URI endpoint, String accessKey, String secretKey, String region, String description,
+                        boolean serializesTransactions) {
         this.endpoint = endpoint;
         this.accessKey = accessKey;
         this.secretKey = secretKey;
         this.region = region;
         this.description = description;
+        this.serializesTransactions = serializesTransactions;
     }
 
     public static AwsEmulator get() {
@@ -73,8 +76,10 @@ public final class AwsEmulator {
             String accessKey = firstNonBlank(System.getenv("AWS_ACCESS_KEY"), "test");
             String secretKey = firstNonBlank(System.getenv("AWS_SECRET_KEY"), "test");
             String region = firstNonBlank(System.getenv("AWS_REGION"), "us-east-1");
+            boolean serializes = Boolean.parseBoolean(System.getenv("AWS_EMULATOR_SERIALIZES_TRANSACTIONS"));
             log.info("Integration tests use the emulator at {} (AWS_ENDPOINT_OVERRIDE)", override);
-            return new AwsEmulator(URI.create(override), accessKey, secretKey, region, "endpoint override " + override);
+            return new AwsEmulator(URI.create(override), accessKey, secretKey, region, "endpoint override " + override,
+                    serializes);
         }
         try {
             LocalStackContainer container = new LocalStackContainer(LOCALSTACK_IMAGE);
@@ -82,7 +87,7 @@ public final class AwsEmulator {
             Runtime.getRuntime().addShutdownHook(new Thread(container::stop, "localstack-stop"));
             log.info("Integration tests use LocalStack at {}", container.getEndpoint());
             return new AwsEmulator(container.getEndpoint(), container.getAccessKey(), container.getSecretKey(),
-                    container.getRegion(), "LocalStack container " + container.getContainerId());
+                    container.getRegion(), "LocalStack container " + container.getContainerId(), true);
         } catch (RuntimeException e) {
             throw new IllegalStateException("No AWS emulator available. Either run Docker so Testcontainers can start "
                     + "LocalStack, or set AWS_ENDPOINT_OVERRIDE to a running emulator such as moto_server "
@@ -96,6 +101,16 @@ public final class AwsEmulator {
     public String region() { return region; }
     public Region sdkRegion() { return Region.of(region); }
     public String description() { return description; }
+
+    /**
+     * Whether concurrent {@code TransactWriteItems} calls are applied one at a time, as DynamoDB
+     * and DynamoDB Local (inside LocalStack) do. moto applies a transaction's items without a
+     * lock, so two overlapping transactions can both pass the same condition; tests that assert
+     * atomicity under contention skip themselves on such an emulator. Set
+     * {@code AWS_EMULATOR_SERIALIZES_TRANSACTIONS=true} with {@code AWS_ENDPOINT_OVERRIDE} when the
+     * emulator behind the override does serialise them.
+     */
+    public boolean serializesTransactions() { return serializesTransactions; }
 
     public StaticCredentialsProvider credentials() {
         return StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey));

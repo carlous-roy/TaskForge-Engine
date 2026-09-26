@@ -281,6 +281,13 @@ Testcontainers, which is what CI does; without Docker, set `AWS_ENDPOINT_OVERRID
 emulator, for example `AWS_ENDPOINT_OVERRIDE=http://127.0.0.1:4566 ./mvnw -B verify` with
 `moto_server` on that port.
 
+One test needs the real thing: the twenty concurrent creates assert that exactly one wins the key,
+which holds on DynamoDB and on DynamoDB Local inside LocalStack because they apply transactions one
+at a time. moto applies a transaction's items without a lock, so on moto that test skips itself
+(set `AWS_EMULATOR_SERIALIZES_TRANSACTIONS=true` if the emulator behind your override does
+serialise them). The `TransactionConflict` cancellation that DynamoDB returns to the losing side of
+such a race is covered by unit tests with a stubbed client, since no emulator produces it on demand.
+
 ---
 
 ## Layout
