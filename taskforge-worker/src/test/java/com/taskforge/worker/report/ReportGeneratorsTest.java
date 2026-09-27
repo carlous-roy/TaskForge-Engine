@@ -37,7 +37,7 @@ class ReportGeneratorsTest {
     static void seed() {
         db = new EmbeddedDatabaseBuilder().setType(EmbeddedDatabaseType.H2).generateUniqueName(true).build();
         jdbc = new JdbcTemplate(db);
-        new DataSeeder(jdbc).seed();
+        new DataSeeder(jdbc, clock).seed();
     }
 
     @AfterAll

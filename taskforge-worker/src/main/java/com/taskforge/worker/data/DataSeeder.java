@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.Random;
@@ -15,6 +16,7 @@ public class DataSeeder {
 
     private static final Logger log = LoggerFactory.getLogger(DataSeeder.class);
     private final JdbcTemplate jdbc;
+    private final Clock clock;
     private final Random rng = new Random(42); // Fixed seed for reproducibility
 
     private static final String[] CATEGORIES = {"Electronics", "Clothing", "Food", "Office", "Tools"};
@@ -32,7 +34,11 @@ public class DataSeeder {
             {"Yoga Mat", "Clothing"}, {"Hiking Backpack", "Clothing"},
     };
 
-    public DataSeeder(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    /** The clock decides which day counts as today; the generators read the same one. */
+    public DataSeeder(JdbcTemplate jdbc, Clock clock) {
+        this.jdbc = jdbc;
+        this.clock = clock;
+    }
 
     @PostConstruct
     public void seed() {
@@ -108,7 +114,7 @@ public class DataSeeder {
         Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM transactions", Integer.class);
         if (count != null && count > 0) return;
 
-        LocalDate start = LocalDate.now().minusDays(90);
+        LocalDate start = LocalDate.now(clock).minusDays(90);
         int numTransactions = 800;
 
         for (int i = 0; i < numTransactions; i++) {
@@ -158,7 +164,7 @@ public class DataSeeder {
         Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM user_activity", Integer.class);
         if (count != null && count > 0) return;
 
-        LocalDate start = LocalDate.now().minusDays(30);
+        LocalDate start = LocalDate.now(clock).minusDays(30);
         int numActivities = 500;
 
         for (int i = 0; i < numActivities; i++) {
