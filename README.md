@@ -279,7 +279,8 @@ URL that downloads), the API over HTTP with a burst of duplicate submissions, an
 with an injected failing generator (retry, retry, fail, dead-letter). They start LocalStack through
 Testcontainers, which is what CI does; without Docker, set `AWS_ENDPOINT_OVERRIDE` to a running
 emulator, for example `AWS_ENDPOINT_OVERRIDE=http://127.0.0.1:4566 ./mvnw -B verify` with
-`moto_server` on that port.
+`moto_server` on that port. The LocalStack image is pinned to 4.14.0 by digest: it is the last
+release that starts without an account token, and the tests must run on any machine without one.
 
 One test needs the real thing: the twenty concurrent creates assert that exactly one wins the key,
 which holds on DynamoDB and on DynamoDB Local inside LocalStack because they apply transactions one

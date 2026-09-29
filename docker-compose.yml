@@ -2,8 +2,9 @@
 # Ports are published on the loopback interface only; LocalStack has no authentication.
 services:
   localstack:
-    # localstack/localstack:2026.8.3
-    image: localstack/localstack:2026.8.3@sha256:4abc29e923e5ed8a63d6c705a9dfa74b15d560e7055845299d87b22dabf9f6e2
+    # 4.14.0 is the last LocalStack release that starts without an account token
+    # (2026.03.0 and later exit with code 55 unless LOCALSTACK_AUTH_TOKEN is set).
+    image: localstack/localstack:4.14.0@sha256:3ebc37595918b8accb852f8048fef2aff047d465167edd655528065b07bc364a
     ports:
       - "127.0.0.1:4566:4566"
     environment:

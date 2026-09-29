@@ -33,9 +33,13 @@ public final class AwsEmulator {
 
     private static final Logger log = LoggerFactory.getLogger(AwsEmulator.class);
 
-    /** localstack/localstack:2026.8.3, pinned by digest. */
+    /**
+     * localstack/localstack:4.14.0, pinned by digest. It is the last LocalStack release that starts
+     * without an account token; from 2026.03.0 the image exits with code 55 unless
+     * LOCALSTACK_AUTH_TOKEN is set, which a public project cannot ask of every contributor or of CI.
+     */
     private static final DockerImageName LOCALSTACK_IMAGE = DockerImageName.parse(
-            "localstack/localstack@sha256:4abc29e923e5ed8a63d6c705a9dfa74b15d560e7055845299d87b22dabf9f6e2");
+            "localstack/localstack@sha256:3ebc37595918b8accb852f8048fef2aff047d465167edd655528065b07bc364a");
 
     private static volatile AwsEmulator instance;
 
