@@ -286,12 +286,13 @@ emulator, for example `AWS_ENDPOINT_OVERRIDE=http://127.0.0.1:4566 ./mvnw -B ver
 `moto_server` on that port. The LocalStack image is pinned to 4.14.0 by digest: it is the last
 release that starts without an account token, and the tests must run on any machine without one.
 
-One test needs the real thing: the twenty concurrent creates assert that exactly one wins the key,
-which holds on DynamoDB and on DynamoDB Local inside LocalStack because they apply transactions one
-at a time. moto applies a transaction's items without a lock, so on moto that test skips itself
-(set `AWS_EMULATOR_SERIALIZES_TRANSACTIONS=true` if the emulator behind your override does
-serialise them). The `TransactionConflict` cancellation that DynamoDB returns to the losing side of
-such a race is covered by unit tests with a stubbed client, since no emulator produces it on demand.
+Two tests need the real thing: the twenty concurrent creates, once against the repository and once
+over HTTP, assert that exactly one wins the key, which holds on DynamoDB and on DynamoDB Local
+inside LocalStack because they apply transactions one at a time. moto applies a transaction's items
+without a lock, so on moto those two tests skip themselves (set
+`AWS_EMULATOR_SERIALIZES_TRANSACTIONS=true` if the emulator behind your override does serialise
+them). The `TransactionConflict` cancellation that DynamoDB returns to the losing side of such a
+race is covered by unit tests with a stubbed client, since no emulator produces it on demand.
 
 ---
 

@@ -29,6 +29,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * The API against a real emulator (LocalStack via Testcontainers, or AWS_ENDPOINT_OVERRIDE): a
@@ -90,6 +91,9 @@ class SubmissionIT {
 
     @Test
     void twentyParallelSubmissionsWithOneKeyCreateExactlyOneJob() throws Exception {
+        assumeTrue(AwsEmulator.get().serializesTransactions(),
+                "needs an emulator that applies transactions one at a time (LocalStack); "
+                        + AwsEmulator.get().description() + " does not guarantee that");
         String key = "burst-" + UUID.randomUUID();
         String body = "{\"type\":\"SALES_SUMMARY\",\"parameters\":{\"region\":\"South\"},\"idempotencyKey\":\"" + key + "\"}";
         int clients = 20;
