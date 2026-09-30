@@ -9,15 +9,22 @@ import org.springframework.stereotype.Component;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.Locale;
 import java.util.Random;
 
+/**
+ * Fills the worker's in-memory H2 database at startup with the sample dataset the generators query:
+ * 20 products, 800 transactions over the 90 days before startup, stock in 4 warehouses, 25 users and
+ * 500 activity records over the previous 30 days. The random seed is fixed, so every worker holds the
+ * same rows for the same start date. None of it is real business data.
+ */
 @Component
 public class DataSeeder {
 
     private static final Logger log = LoggerFactory.getLogger(DataSeeder.class);
     private final JdbcTemplate jdbc;
     private final Clock clock;
-    private final Random rng = new Random(42); // Fixed seed for reproducibility
+    private final Random rng = new Random(42);
 
     private static final String[] CATEGORIES = {"Electronics", "Clothing", "Food", "Office", "Tools"};
     private static final String[] REGIONS = {"North", "South", "East", "West"};
@@ -153,7 +160,7 @@ public class DataSeeder {
                 "Sam", "Tina", "Uma", "Victor", "Wendy", "Xander", "Yara"};
 
         for (String name : firstNames) {
-            String username = name.toLowerCase();
+            String username = name.toLowerCase(Locale.ROOT);
             jdbc.update("INSERT INTO users (username, email) VALUES (?, ?)",
                     username, username + "@example.com");
         }

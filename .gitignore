@@ -9,7 +9,11 @@ node_modules/
 .idea/
 *.iml
 .vscode/
+.settings/
+.classpath
+.project
 *.swp
+*~
 
 # OS
 .DS_Store
@@ -23,4 +27,4 @@ Thumbs.db
 
 # Environment
 .env
-.env.local
+.env.*

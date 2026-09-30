@@ -3,6 +3,7 @@ package com.taskforge.common.model;
 import com.taskforge.common.enums.ReportStatus;
 import com.taskforge.common.enums.ReportType;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
@@ -136,7 +137,7 @@ public class ReportJob {
     }
 
     /** True when the job is PROCESSING but nothing has touched it for longer than {@code staleAfter}. */
-    public boolean isLockStale(Instant now, java.time.Duration staleAfter) {
+    public boolean isLockStale(Instant now, Duration staleAfter) {
         return status == ReportStatus.PROCESSING && updatedAt != null
                 && updatedAt.plus(staleAfter).isBefore(now);
     }

@@ -22,6 +22,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * Creates, reads and lists report jobs and resolves their download URLs. Submission is the only
+ * write path in the API; everything after ACCEPTED and QUEUED belongs to the worker.
+ */
 @Service
 public class ReportService {
 

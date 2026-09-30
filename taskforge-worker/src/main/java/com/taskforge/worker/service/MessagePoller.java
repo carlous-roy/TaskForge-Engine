@@ -37,6 +37,13 @@ public class MessagePoller implements SmartLifecycle {
      */
     static final int PHASE = SmartLifecycle.DEFAULT_PHASE - 512;
 
+    /**
+     * How long, after the drain deadline has interrupted the remaining jobs, they are given to hand
+     * their messages back. An interrupt cannot cut short a blocking HTTP call, so this covers one
+     * such call plus the hand-back writes.
+     */
+    static final Duration INTERRUPT_GRACE = Duration.ofSeconds(30);
+
     private final QueueService queueService;
     private final JobProcessor jobProcessor;
     private final TaskForgeProperties.Worker config;
@@ -130,13 +137,6 @@ public class MessagePoller implements SmartLifecycle {
             capacity.release();
         }
     }
-
-    /**
-     * How long, after the drain deadline has interrupted the remaining jobs, they are given to hand
-     * their messages back. An interrupt cannot cut short a blocking HTTP call, so this covers one
-     * such call plus the hand-back writes.
-     */
-    static final Duration INTERRUPT_GRACE = Duration.ofSeconds(30);
 
     @Override
     public synchronized void stop() {

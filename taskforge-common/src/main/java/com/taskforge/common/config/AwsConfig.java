@@ -18,6 +18,10 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 
 import java.net.URI;
 
+/**
+ * The DynamoDB, SQS and S3 clients and the S3 presigner. With {@code aws.endpoint} set they point at
+ * an emulator with static credentials; without it they use AWS and the SDK's default credential chain.
+ */
 @Configuration
 @EnableConfigurationProperties({AwsProperties.class, TaskForgeProperties.class})
 public class AwsConfig {

@@ -29,6 +29,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * The HTTP surface: submit a report, read or list jobs, follow a download and check health. Status
+ * codes and error bodies for the failure cases come from {@link GlobalExceptionHandler}.
+ */
 @RestController
 @RequestMapping("/api/v1")
 public class ReportController {
