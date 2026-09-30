@@ -205,7 +205,7 @@ body::before {
 }
 .fade-in { animation: fadeUp 0.4s ease both; }
 
-/* Additions for the Vite build */
+/* Filters, refresh banner and retry badge */
 .form-select::placeholder { color: var(--text-muted); }
 .filters { padding: 10px 20px; border-bottom: 1px solid var(--border); display: flex; gap: 6px; flex-wrap: wrap; }
 .btn-ghost.active { background: rgba(220,38,38,0.08); border-color: rgba(220,38,38,0.2); color: #DC2626; }
@@ -215,8 +215,13 @@ body::before {
 }
 .badge-RETRY_SCHEDULED { background: rgba(245,158,11,0.08); color: #F59E0B; }
 .badge-RETRY_SCHEDULED::before { background: #F59E0B; }
-.footer { border-top: 1px solid var(--border); padding: 20px 24px; margin-top: 40px; }
-.footer { max-width: 1100px; margin-left: auto; margin-right: auto; display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); }
+
+/* Footer and error page */
+.footer {
+    border-top: 1px solid var(--border); padding: 20px 24px; margin-top: 40px;
+    max-width: 1100px; margin-left: auto; margin-right: auto;
+    display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted);
+}
 .footer a { color: var(--text-muted); text-decoration: none; }
 .fatal { max-width: 640px; margin: 80px auto; padding: 32px; text-align: center; }
 .fatal h1 { font-size: 20px; margin-bottom: 12px; }

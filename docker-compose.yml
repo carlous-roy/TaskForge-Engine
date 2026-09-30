@@ -10,7 +10,7 @@ services:
     environment:
       - SERVICES=dynamodb,sqs,s3
       - DEFAULT_REGION=us-east-1
-      # Actually delete DynamoDB items whose TTL has passed (LocalStack keeps them by default).
+      # Delete DynamoDB items whose TTL has passed; LocalStack keeps them by default.
       - DYNAMODB_REMOVE_EXPIRED_ITEMS=1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]

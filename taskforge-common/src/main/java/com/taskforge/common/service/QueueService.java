@@ -96,7 +96,7 @@ public class QueueService {
             log.info("Creating SQS queue '{}'", name);
             return sqs.createQueue(CreateQueueRequest.builder().queueName(name).attributes(attributes).build()).queueUrl();
         } catch (SqsException e) {
-            // Some emulators report the missing queue under the legacy error code.
+            // Some emulators report a missing queue under the older error code.
             String code = e.awsErrorDetails() == null ? "" : String.valueOf(e.awsErrorDetails().errorCode());
             if (code.contains("NonExistentQueue") || code.contains("QueueDoesNotExist")) {
                 log.info("Creating SQS queue '{}'", name);

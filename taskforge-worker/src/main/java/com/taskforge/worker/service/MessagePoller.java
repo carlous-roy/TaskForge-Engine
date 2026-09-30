@@ -142,7 +142,7 @@ public class MessagePoller implements SmartLifecycle {
     public synchronized void stop() {
         if (!running) return;
         running = false;
-        log.info("Shutdown requested: no longer polling, {} job(s) in flight, waiting up to {}",
+        log.info("Shutdown requested: {} job(s) in flight, waiting up to {}",
                 activeJobs.get(), config.getDrainTimeout());
         // The drain clock starts now; the poll thread may still be inside a long poll and is joined last.
         pollThread.interrupt();

@@ -168,7 +168,7 @@ export default function App() {
         {state.error && (
           <div className="banner" role="alert">
             Could not refresh the report list: {state.error}
-            {pausedSeconds > 0 ? ` — polling resumes in ${pausedSeconds}s.` : ' Showing the last known state.'}
+            {pausedSeconds > 0 ? ` Polling resumes in ${pausedSeconds}s.` : ' Showing the last known state.'}
           </div>
         )}
 

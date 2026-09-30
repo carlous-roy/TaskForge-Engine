@@ -1,7 +1,7 @@
 # TaskForge
 
 <p>
-  <a href="https://github.com/carlous-roy/TaskForge-Engine/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF?style=flat-square&logo=githubactions&logoColor=white" alt="CI" /></a>
+  <a href="https://github.com/carlous-roy/TaskForge-Engine/actions/workflows/ci.yml"><img src="https://github.com/carlous-roy/TaskForge-Engine/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
   <img src="https://img.shields.io/badge/Java-17-007396?style=flat-square&logo=openjdk&logoColor=white" alt="Java 17" />
   <img src="https://img.shields.io/badge/Spring_Boot-4.1-6DB33F?style=flat-square&logo=springboot&logoColor=white" alt="Spring Boot 4.1" />
   <img src="https://img.shields.io/badge/AWS-SQS_%C2%B7_DynamoDB_%C2%B7_S3-FF9900?style=flat-square&logo=amazonwebservices&logoColor=white" alt="AWS" />
@@ -19,24 +19,24 @@ that is valid for 60 minutes.
 Most of the code is about what happens when a step fails. The behaviour below is what the code does,
 and each point has a test.
 
-- **Retries with full-jitter backoff, driven by SQS.** A failed attempt does not re-send the message.
+- Retries with full-jitter backoff, driven by SQS. A failed attempt does not re-send the message.
   The worker hides the same message with `ChangeMessageVisibility` for `random(0, min(60 s, 2 s × 2^attempt))`
   seconds and SQS redelivers it. Three attempts in total.
-- **A real dead-letter queue.** The queue's redrive policy moves a message to the dead-letter queue
-  after its third delivery. A consumer in the worker reads that queue, marks the job `FAILED` with
-  the last recorded error, stamps `deadLetteredAt`, and stops.
-- **Idempotency keys enforced by a conditional transaction.** The job and a `KEY#<key>` marker are
+- A dead-letter queue with a consumer. The queue's redrive policy moves a message to the dead-letter
+  queue after its third delivery. A consumer in the worker reads that queue, marks the job `FAILED`
+  with the last recorded error, stamps `deadLetteredAt`, and stops.
+- Idempotency keys enforced by a conditional transaction. The job and a `KEY#<key>` marker are
   written in one DynamoDB `TransactWriteItems`, each conditional on not existing. Concurrent
   duplicates lose the transaction and get `409 Conflict` with the existing job id.
-- **Conditional state transitions.** Every write to a job is conditional on a version attribute. A
+- Conditional state transitions. Every write to a job is conditional on a version attribute. A
   slow worker cannot overwrite a job another worker has completed.
-- **A drain on SIGTERM.** The worker stops polling, finishes in-flight jobs for up to 60 seconds,
-  then interrupts what is left; an interrupted job hands its message straight back to SQS.
-- **Correlation ids on every hop.** The API accepts or generates `X-Correlation-ID`, every log line
-  in both processes carries it, it travels as an SQS message attribute, and the S3 object is tagged
+- A drain on SIGTERM. The worker stops polling, finishes in-flight jobs for up to 60 seconds, then
+  interrupts what is left; an interrupted job hands its message straight back to SQS.
+- Correlation ids on every hop. The API accepts or generates `X-Correlation-ID`, every log line in
+  both processes carries it, it travels as an SQS message attribute, and the S3 object is tagged
   with it.
-- **Rate limiting that survives a proxy.** 60 requests per minute per client address, with
-  `X-Forwarded-For` honoured only from a configured list of proxies.
+- Rate limiting that works behind a proxy. 60 requests per minute per client address, with
+  `X-Forwarded-For` honoured only from a configured pattern of proxy addresses.
 
 [Browser walkthrough](https://taskforge.roycarlous.com) · [Portfolio](https://roycarlous.com)
 
@@ -82,12 +82,12 @@ ACCEPTED ──> QUEUED ──> PROCESSING ──> COMPLETED
 ### Backoff
 
 The delay before a retry is drawn uniformly from `[0, min(cap, base × 2^attempt)]` whole seconds,
-with `base = 2 s` and `cap = 60 s`: after the first failure `0–4 s`, after the second `0–8 s`. This is
+with `base = 2 s` and `cap = 60 s`: after the first failure `0-4 s`, after the second `0-8 s`. This is
 the "full jitter" strategy from Marc Brooker's post "Exponential Backoff And Jitter" on the AWS
 Architecture Blog (March 2015, https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/).
 The point of the randomness is that a batch of jobs failing against the same overloaded dependency
 does not come back all at once. `BackoffPolicyTest` checks the bounds and that repeated draws differ;
-`JobProcessorTest` checks that the visibility timeout actually sent to SQS varies.
+`JobProcessorTest` checks that the visibility timeout sent to SQS varies.
 
 ### Idempotency
 
@@ -179,8 +179,8 @@ Submission body:
 
 Parameters are checked per type at submission: `SALES_SUMMARY` takes `dateFrom`, `dateTo`
 (ISO dates, from ≤ to) and `region`; `INVENTORY_SNAPSHOT` takes `warehouse` and `lowStockThreshold`
-(0–1,000,000); `USER_ACTIVITY` takes `dateFrom`, `dateTo` and `userId` (positive integer). Unknown
-parameter names are rejected. The idempotency key is 1–128 characters of `A-Z a-z 0-9 . _ : -`.
+(0 to 1,000,000); `USER_ACTIVITY` takes `dateFrom`, `dateTo` and `userId` (positive integer). Unknown
+parameter names are rejected. The idempotency key is 1 to 128 characters of `A-Z a-z 0-9 . _ : -`.
 
 Every error has the same body:
 
@@ -244,9 +244,13 @@ Settings live in `application.yml` under `taskforge.*` and `aws.*` and are bound
 | `AWS_PUBLIC_ENDPOINT` | same as `AWS_ENDPOINT` | Endpoint written into presigned URLs |
 | `AWS_REGION` | `us-east-1` | Region |
 | `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` | `test` | Static credentials, used only with an emulator |
+| `TASKFORGE_TABLE` | `taskforge-reports` | DynamoDB table for job records and idempotency markers |
+| `TASKFORGE_QUEUE` | `taskforge-reports` | Main SQS queue |
+| `TASKFORGE_DLQ` | `taskforge-reports-dlq` | Dead-letter queue |
+| `TASKFORGE_BUCKET` | `taskforge-reports` | S3 bucket for the CSV files |
 | `TASKFORGE_TRUSTED_PROXIES` | empty | Regular expression of proxy addresses whose `X-Forwarded-For` is trusted |
 | `TASKFORGE_RATE_LIMIT_PER_MINUTE` | `60` | Requests per minute per client address |
-| `TASKFORGE_RATE_LIMIT_ENABLED` | `true` | |
+| `TASKFORGE_RATE_LIMIT_ENABLED` | `true` | `false` turns rate limiting off |
 | `TASKFORGE_WORKER_MAX_CONCURRENT` | `3` | Jobs one worker runs at a time |
 | `TASKFORGE_WORKER_DRAIN_TIMEOUT` | `60s` | How long a stopping worker waits for in-flight jobs |
 | `WORKER_ID` | host name plus a suffix | Name written into `lockedBy` and logs |
