@@ -300,7 +300,7 @@ taskforge-worker/        poller, job processor, dead-letter consumer, generators
 taskforge-dashboard/     React dashboard (Vite), packaged as static resources for the API
 taskforge-test-support/  locates the AWS emulator for integration tests
 scripts/test-api.sh      end-to-end check against a running stack
-.github/workflows/ci.yml mvnw verify and docker compose build on every push
+.github/workflows/ci.yml mvnw verify and docker compose build on pushes to main and pull requests
 ```
 
 ---
