@@ -12,10 +12,10 @@ COPY taskforge-api/pom.xml taskforge-api/
 COPY taskforge-worker/pom.xml taskforge-worker/
 RUN mvn -B -q --no-transfer-progress -pl taskforge-worker -am dependency:go-offline
 
-# 2. Sources. Tests run in CI, not in the image build.
+# 2. Sources. Tests run in CI, not in the image build, so test sources are neither compiled nor run.
 COPY taskforge-common/src taskforge-common/src
 COPY taskforge-worker/src taskforge-worker/src
-RUN mvn -B -q -o --no-transfer-progress -pl taskforge-worker -am package -DskipTests -DskipITs
+RUN mvn -B -q -o --no-transfer-progress -pl taskforge-worker -am package -Dmaven.test.skip=true -DskipTests
 
 # eclipse-temurin:17.0.20_8-jre-alpine
 FROM eclipse-temurin:17.0.20_8-jre-alpine@sha256:45d19def67191d1df7d233282051ac2f6908c6b2d7eaef75441d7e7c721c6d01

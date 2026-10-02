@@ -17,13 +17,13 @@ COPY taskforge-dashboard/package.json taskforge-dashboard/package-lock.json task
 RUN mvn -B -q --no-transfer-progress -pl taskforge-dashboard \
     frontend:install-node-and-npm@install-node-and-npm frontend:npm@npm-ci
 
-# 3. Sources. Tests run in CI, not in the image build.
+# 3. Sources. Tests run in CI, not in the image build, so test sources are neither compiled nor run.
 COPY taskforge-common/src taskforge-common/src
 COPY taskforge-dashboard/vite.config.js taskforge-dashboard/index.html taskforge-dashboard/
 COPY taskforge-dashboard/public taskforge-dashboard/public
 COPY taskforge-dashboard/src taskforge-dashboard/src
 COPY taskforge-api/src taskforge-api/src
-RUN mvn -B -q -o --no-transfer-progress -pl taskforge-api -am package -DskipTests -DskipITs
+RUN mvn -B -q -o --no-transfer-progress -pl taskforge-api -am package -Dmaven.test.skip=true -DskipTests
 
 # eclipse-temurin:17.0.20_8-jre-alpine
 FROM eclipse-temurin:17.0.20_8-jre-alpine@sha256:45d19def67191d1df7d233282051ac2f6908c6b2d7eaef75441d7e7c721c6d01
