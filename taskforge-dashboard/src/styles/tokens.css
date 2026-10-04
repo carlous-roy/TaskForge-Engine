@@ -1,0 +1,41 @@
+/* The console's palette: dark graphite surfaces, one warm accent for actions, and four state
+   colours that mean the same thing everywhere (queued, running, done, failed). */
+:root {
+  color-scheme: dark;
+
+  --bg: #0e1013;
+  --panel: #15181d;
+  --panel-2: #1b1f26;
+  --panel-3: #222731;
+  --line: #272c35;
+  --line-2: #343b47;
+
+  --fg: #e7eaf0;
+  --fg-2: #aeb6c3;
+  --fg-3: #737d8c;
+  --fg-4: #505968;
+
+  --amber: #f5b53f;
+  --amber-dim: rgba(245, 181, 63, 0.16);
+  --green: #3ecf8e;
+  --green-dim: rgba(62, 207, 142, 0.16);
+  --red: #ff6b6b;
+  --red-dim: rgba(255, 107, 107, 0.16);
+  --cyan: #4fd1e0;
+  --cyan-dim: rgba(79, 209, 224, 0.16);
+  --violet: #b094ff;
+  --violet-dim: rgba(176, 148, 255, 0.16);
+
+  --accent: var(--amber);
+  --accent-fg: #1a1203;
+
+  --sans:
+    'IBM Plex Sans Variable', 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --radius: 6px;
+  --radius-lg: 10px;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
+
+  --bar-h: 52px;
+}

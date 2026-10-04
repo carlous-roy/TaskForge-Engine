@@ -13,7 +13,7 @@ A job-processing system for CSV reports, built on Spring Boot with SQS, DynamoDB
 You POST a report request. The API writes a job record, puts a message on an SQS queue and answers
 `202 Accepted` with the job id. Independent workers receive the message, run a query against a
 seeded sample dataset in an embedded H2 database, upload the CSV to S3 and record the outcome. You
-poll the job, or watch the embedded dashboard, and when it is `COMPLETED` you get a presigned S3 URL
+poll the job, or watch the embedded console, and when it is `COMPLETED` you get a presigned S3 URL
 that is valid for 60 minutes.
 
 Most of the code is about what happens when a step fails. The behaviour below is what the code does,
@@ -38,11 +38,14 @@ and each point has a test.
 - Rate limiting that works behind a proxy. 60 requests per minute per client address, with
   `X-Forwarded-For` honoured only from a configured pattern of proxy addresses.
 
-[Browser walkthrough](https://taskforge.roycarlous.com) · [Portfolio](https://roycarlous.com)
+[Operations console](https://taskforge.roycarlous.com) · [Portfolio](https://roycarlous.com)
 
-The walkthrough at taskforge.roycarlous.com is a static page that animates the job state machine
-in the browser. It does not call this API and produces no real reports; to see the system run, start
-it locally as described below.
+The page at taskforge.roycarlous.com is this repository's console built in its browser edition: a
+simulator of the service runs in the tab with the rules and constants above, and the page lets you
+submit jobs, reuse an idempotency key, poison a job, flood the API, and kill, freeze or drain a
+worker, then watch the queue, the retries and the dead-letter queue do what the Java does. It does
+not call this API and produces no real reports; to see the system itself run, start it locally as
+described below.
 
 ---
 
@@ -113,7 +116,7 @@ concurrent creates with one key and asserts one job; `SubmissionIT` does the sam
 docker compose up --build
 ```
 
-This starts LocalStack, the API on http://localhost:8080 (the dashboard is at `/`) and one worker on
+This starts LocalStack, the API on http://localhost:8080 (the console is at `/`) and one worker on
 port 8081. The images build the code inside Docker, so no local Maven or Node is needed. Presigned
 download links point at `http://localhost:4566`, which is LocalStack's published port.
 
@@ -204,14 +207,34 @@ and `X-RateLimit-Remaining`; a `429` carries `Retry-After`. Every response carri
 
 ---
 
-## The dashboard
+## The console
 
-The API serves a React dashboard at `/`, built with Vite in the `taskforge-dashboard` module and
-packaged into the API jar. It polls the report list and the health endpoint every five seconds. A
-failed refresh keeps the last list on screen and shows why; a `429` pauses polling for the period the
-API asks for. Completed rows link to the presigned CSV. Health shows what the API reports: `UP`,
-`DEGRADED` or `UNREACHABLE`, with queue and dead-letter depths. The health endpoint is exempt from
-rate limiting, and the list poll uses a fifth of the per-client budget.
+The API serves a React console at `/`, built with Vite and TypeScript in the `taskforge-dashboard`
+module and packaged into the API jar. It polls the report list and the health endpoint every five
+seconds. A failed refresh keeps the last list on screen and shows why; a `429` pauses polling for the
+period the API asks for. Completed rows link to the presigned CSV, status changes seen between polls
+are listed as activity, and health shows what the API reports: `UP`, `DEGRADED` or `UNREACHABLE`,
+with queue and dead-letter depths. The health endpoint is exempt from rate limiting, and the list
+poll uses a fifth of the per-client budget.
+
+The same source tree builds a second edition with `VITE_DEMO=1`. It calls no API: `src/sim` is a
+discrete-event simulator of the two services, written against the Java and its tests, with the
+constants of `application.yml` (a 120 s visibility timeout, three attempts, full-jitter backoff from
+2 s capped at 60 s, a 60 s drain, 60 requests a minute). It runs the API's idempotency transaction,
+the queue's visibility and redrive rules, the worker's conditional writes, stale-lock takeover,
+drain and the dead-letter consumer on a seeded clock, so a run replays exactly from its seed. On top
+of it the page draws the pipeline (API, queue, worker lanes with their slots, S3, dead-letter queue),
+counters, a log pane with the processes' lines and a correlation-id filter, and a deck of controls
+for breaking things. The simulator has its own tests, one scenario per rule, next to the code.
+
+```bash
+cd taskforge-dashboard
+npm ci
+npm run dev          # service edition against an API on :8080
+npm run dev:demo     # browser edition, no API
+npm test             # simulator, hooks and component tests
+npm run lint && npm run format:check && npm run typecheck
+```
 
 ---
 
@@ -266,7 +289,7 @@ Other settings, changed in the YAML: `taskforge.retry.max-attempts` (3; also the
 ## Tests
 
 ```bash
-./mvnw -B verify              # unit tests, dashboard tests, integration tests
+./mvnw -B verify              # unit tests, console tests, integration tests
 ./mvnw -B verify -DskipITs    # unit tests only
 ```
 
@@ -302,11 +325,20 @@ race is covered by unit tests with a stubbed client, since no emulator produces 
 taskforge-common/        job model, DynamoDB repository, SQS and S3 services, backoff, parameter rules
 taskforge-api/           REST API, error mapping, rate limiter, correlation filter
 taskforge-worker/        poller, job processor, dead-letter consumer, generators, data seeder
-taskforge-dashboard/     React dashboard (Vite), packaged as static resources for the API
+taskforge-dashboard/     React console (Vite, TypeScript) with the browser-edition simulator in src/sim
 taskforge-test-support/  locates the AWS emulator for integration tests
 scripts/test-api.sh      end-to-end check against a running stack
 .github/workflows/ci.yml mvnw verify and docker compose build on pushes to main and pull requests
 ```
+
+---
+
+## The hosted page
+
+taskforge.roycarlous.com is the browser edition, deployed from this repository with
+`taskforge-dashboard` as the root directory and `VITE_DEMO=1` in the build environment, which also
+switches the build output to `dist`; `taskforge-dashboard/vercel.json` carries the response headers.
+A push to `main` redeploys it. The service edition is not hosted; run it with Docker Compose as above.
 
 ---
 
@@ -318,8 +350,11 @@ scripts/test-api.sh      end-to-end check against a running stack
 - A job that runs longer than the SQS visibility timeout (120 s) will be redelivered while it is
   still running; the second worker will see a stale lock and take it over, and the first worker's
   result is discarded when its conditional write fails. Raise the timeout for slow reports.
-- The dashboard's list request reads the whole table (every page of the scan) and sorts in memory.
+- The console's list request reads the whole table (every page of the scan) and sorts in memory.
   With the 24-hour TTL the table stays small; it would not scale to millions of jobs.
+- The browser edition is a model of the services, not the services. Report generation times, the
+  background traffic and the fault injection are the console's; the rules and constants are the
+  code's, and anything the Java does that the simulator does not is a gap in the simulator.
 - The services create their own table, queues and bucket. That is convenient locally and means the
   AWS identity needs create permissions.
 
