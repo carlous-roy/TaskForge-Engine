@@ -19,7 +19,8 @@ RUN mvn -B -q --no-transfer-progress -pl taskforge-dashboard \
 
 # 3. Sources. Tests run in CI, not in the image build, so test sources are neither compiled nor run.
 COPY taskforge-common/src taskforge-common/src
-COPY taskforge-dashboard/vite.config.js taskforge-dashboard/index.html taskforge-dashboard/
+COPY taskforge-dashboard/vite.config.ts taskforge-dashboard/tsconfig.json \
+     taskforge-dashboard/vitest.setup.ts taskforge-dashboard/index.html taskforge-dashboard/
 COPY taskforge-dashboard/public taskforge-dashboard/public
 COPY taskforge-dashboard/src taskforge-dashboard/src
 COPY taskforge-api/src taskforge-api/src
